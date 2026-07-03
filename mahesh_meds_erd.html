@@ -1,0 +1,235 @@
+
+<style>
+#erd { width: 100%; overflow-x: auto; padding: 1rem 0; }
+#erd svg { max-width: 100%; height: auto; }
+#erd svg.erDiagram .divider path { stroke-opacity: 0.4; }
+#erd svg.erDiagram .row-rect-odd path,
+#erd svg.erDiagram .row-rect-odd rect,
+#erd svg.erDiagram .row-rect-even path,
+#erd svg.erDiagram .row-rect-even rect { stroke: none !important; }
+</style>
+<div id="erd"></div>
+<script type="module">
+import mermaid from 'https://esm.sh/mermaid@11/dist/mermaid.esm.min.mjs';
+const dark = matchMedia('(prefers-color-scheme: dark)').matches;
+await document.fonts.ready;
+mermaid.initialize({
+  startOnLoad: false,
+  theme: 'base',
+  fontFamily: '"Anthropic Sans", sans-serif',
+  themeVariables: {
+    darkMode: dark,
+    fontSize: '13px',
+    fontFamily: '"Anthropic Sans", sans-serif',
+    lineColor: dark ? '#9c9a92' : '#73726c',
+    textColor: dark ? '#c2c0b6' : '#3d3d3a',
+    primaryColor: dark ? '#2a2a28' : '#f1efea',
+    primaryTextColor: dark ? '#c2c0b6' : '#3d3d3a',
+    primaryBorderColor: dark ? '#5f5e5a' : '#b4b2a9',
+    attributeBackgroundColorOdd: dark ? '#232321' : '#f9f8f5',
+    attributeBackgroundColorEven: dark ? '#1e1e1c' : '#f1efea',
+  },
+});
+
+const diagram = `erDiagram
+  centers {
+    char36 id PK
+    varchar name
+    text address
+    varchar city
+    varchar state
+    varchar pin_code
+    varchar contact_person
+    varchar contact_phone
+    bool is_active
+    timestamp created_at
+  }
+
+  users {
+    char36 id PK
+    varchar name
+    varchar mobile
+    enum role
+    char36 center_id FK
+    bool is_active
+    timestamp last_login
+    timestamp created_at
+  }
+
+  otp_sessions {
+    char36 id PK
+    varchar mobile
+    varchar otp_code
+    timestamp expires_at
+    bool is_used
+    int attempts
+    text user_agent
+    timestamp created_at
+  }
+
+  skus {
+    char36 id PK
+    varchar name
+    varchar sku_code
+    text description
+    varchar category
+    text image_url
+    bool is_active
+    timestamp created_at
+  }
+
+  assets {
+    char36 id PK
+    char36 sku_id FK
+    varchar serial_number
+    char36 center_id FK
+    enum status
+    date purchase_date
+    date warranty_expiry
+    varchar invoice_number
+    text invoice_url
+    text qr_code
+    text notes
+    timestamp created_at
+  }
+
+  lease_requests {
+    char36 id PK
+    varchar token_number
+    varchar requestor_name
+    varchar mobile
+    varchar aadhar_number
+    varchar reference_name
+    char36 preferred_center_id FK
+    varchar expected_duration
+    text notes
+    enum status
+    char36 approved_by FK
+    text approval_comments
+    text rejection_reason
+    timestamp approved_at
+    timestamp created_at
+    timestamp updated_at
+  }
+
+  lease_items {
+    char36 id PK
+    char36 lease_request_id FK
+    char36 sku_id FK
+    char36 asset_id FK
+    int quantity_requested
+    int approved_quantity
+    timestamp issued_at
+    char36 issued_by FK
+    date due_date
+    timestamp returned_at
+    char36 returned_to FK
+    char36 return_center_id FK
+    text condition_on_return
+    timestamp created_at
+  }
+
+  asset_transfers {
+    char36 id PK
+    char36 asset_id FK
+    char36 from_center_id FK
+    char36 to_center_id FK
+    enum transfer_reason
+    varchar reference_number
+    char36 initiated_by FK
+    enum status
+    text notes
+    timestamp completed_at
+    timestamp created_at
+  }
+
+  repairs {
+    char36 id PK
+    char36 asset_id FK
+    char36 reported_by FK
+    varchar repair_center_name
+    date sent_date
+    date expected_return_date
+    date actual_return_date
+    enum status
+    text notes
+    decimal cost
+    timestamp created_at
+  }
+
+  notifications_log {
+    char36 id PK
+    varchar recipient_mobile
+    text message
+    varchar type
+    char36 reference_id
+    enum status
+    text error_message
+    timestamp sent_at
+  }
+
+  audit_log {
+    char36 id PK
+    char36 user_id FK
+    char36 center_id FK
+    varchar action
+    varchar entity_type
+    char36 entity_id
+    json old_value
+    json new_value
+    varchar ip_address
+    timestamp created_at
+  }
+
+  centers ||--o{ users : "employs"
+  centers ||--o{ assets : "holds"
+  centers ||--o{ lease_requests : "preferred by"
+  centers ||--o{ lease_items : "return center"
+  centers ||--o{ asset_transfers : "from"
+  centers ||--o{ asset_transfers : "to"
+  centers ||--o{ audit_log : "scoped to"
+
+  users ||--o{ lease_requests : "approves"
+  users ||--o{ lease_items : "issues"
+  users ||--o{ lease_items : "receives return"
+  users ||--o{ asset_transfers : "initiates"
+  users ||--o{ repairs : "reports"
+  users ||--o{ audit_log : "actor"
+
+  skus ||--o{ assets : "defines"
+  skus ||--o{ lease_items : "requested as"
+
+  assets ||--o{ lease_items : "assigned to"
+  assets ||--o{ asset_transfers : "transferred"
+  assets ||--o{ repairs : "sent for repair"
+
+  lease_requests ||--o{ lease_items : "contains"
+`;
+
+const { svg } = await mermaid.render('erd-svg', diagram);
+document.getElementById('erd').innerHTML = svg;
+
+document.querySelectorAll('#erd svg.erDiagram .node').forEach(node => {
+  const firstPath = node.querySelector('path[d]');
+  if (!firstPath) return;
+  const d = firstPath.getAttribute('d');
+  const nums = d.match(/-?[\d.]+/g)?.map(Number);
+  if (!nums || nums.length < 8) return;
+  const xs = [nums[0], nums[2], nums[4], nums[6]];
+  const ys = [nums[1], nums[3], nums[5], nums[7]];
+  const x = Math.min(...xs), y = Math.min(...ys);
+  const w = Math.max(...xs) - x, h = Math.max(...ys) - y;
+  const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+  rect.setAttribute('x', x); rect.setAttribute('y', y);
+  rect.setAttribute('width', w); rect.setAttribute('height', h);
+  rect.setAttribute('rx', '8');
+  for (const a of ['fill', 'stroke', 'stroke-width', 'class', 'style']) {
+    if (firstPath.hasAttribute(a)) rect.setAttribute(a, firstPath.getAttribute(a));
+  }
+  firstPath.replaceWith(rect);
+});
+
+document.querySelectorAll('#erd svg.erDiagram .row-rect-odd path, #erd svg.erDiagram .row-rect-even path').forEach(p => {
+  p.setAttribute('stroke', 'none');
+});
+</script>
