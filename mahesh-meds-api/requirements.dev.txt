@@ -1,0 +1,4 @@
+# Development-only dependencies
+# Install with: pip install -r requirements.dev.txt
+
+pytest
