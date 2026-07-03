@@ -2372,14 +2372,16 @@ def create_lease_request(
         db=db,
         reference_id=lease.id,
     )
+    sku_ids = [item["sku_id"] for item in items_payload]
+    skus = db.query(SKU).filter(SKU.id.in_(sku_ids)).all()
+    items_str = ", ".join(sku.name for sku in skus) if skus else "N/A"
     for approver in active_users_with_permission("requests.approve", db):
         send_template_sms(
             mobile=approver.mobile,
             event_name="request_submitted_approver",
             variables={
-                "token_number": lease.token_number,
                 "requestor_name": lease.requestor_name,
-                "center_name": "Not selected",
+                "items": items_str,
             },
             db=db,
             reference_id=lease.id,
@@ -2541,13 +2543,15 @@ def update_lease_request(
         )
 
     if before.get("status") != "issued" and lease.status == "issued":
-        due_date_str = lease.due_date.strftime("%d %b %Y") if lease.due_date else "N/A"
+        db_items = db.query(LeaseItem).filter(LeaseItem.lease_request_id == lease.id).all()
+        items_names = [item.sku.name for item in db_items if item.sku]
+        items_str = ", ".join(items_names) if items_names else "N/A"
         send_template_sms(
             mobile=lease.mobile,
             event_name="device_issued_user",
             variables={
                 "token_number": lease.token_number,
-                "due_date": due_date_str,
+                "items": items_str,
             },
             db=db,
             reference_id=lease.id,

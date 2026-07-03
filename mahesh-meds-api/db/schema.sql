@@ -415,11 +415,11 @@ SELECT @admin_user_id, id FROM roles WHERE name = 'master_admin';
 INSERT INTO sms_templates (id, event_name, template_text, template_id, is_active) VALUES
   (UUID(), 'otp_login', 'Your OTP for Registration or Login for Marwari Angels-an initiative of Mahesh Foundation is {otp}', '1207164430243674445', TRUE),
   (UUID(), 'request_submitted_user', 'Mahesh Foundation: Your request is received. Token: {token_number}. We will update you after review.', NULL, TRUE),
-  (UUID(), 'request_submitted_approver', 'Mahesh Foundation: New request {token_number} for {requestor_name}. Please review.', NULL, TRUE),
+  (UUID(), 'request_submitted_approver', 'New device request received on Mahesh Foundation portal. Requestor:{requestor_name}. Device Requested: {items}. Please review in the system.- MHSFND', '1207178298810693025', TRUE),
   (UUID(), 'request_approved_user', 'Mahesh Foundation: Request {token_number} is approved. {pickup_guidance}', NULL, TRUE),
   (UUID(), 'request_approved_center_manager', 'Mahesh Foundation: Request {token_number} for {requestor_name} is approved for {center_name}. Please prepare for fulfillment.', NULL, TRUE),
   (UUID(), 'request_rejected_user', 'Mahesh Foundation: Request {token_number} was not approved. Please contact support for help.', NULL, TRUE),
-  (UUID(), 'device_issued_user', 'Mahesh Foundation: Devices for token {token_number} were issued. Due date: {due_date}.', NULL, TRUE),
+  (UUID(), 'device_issued_user', 'Devices have been issued by Mahesh Foundation Medical Equipment services against Token: {token_number}. Items:{items}. -MHSFND', '1207178299880758060', TRUE),
   (UUID(), 'return_reminder_7d', 'Reminder: Devices for Token: {token_number} are due on {due_date}. Please arrange return. - MHSFND', NULL, TRUE),
   (UUID(), 'return_reminder_3d', 'Reminder: Devices for Token: {token_number} are due on {due_date}. Please arrange return. - MHSFND', NULL, TRUE),
   (UUID(), 'return_reminder_1d', 'Reminder: Devices for Token: {token_number} are due on {due_date}. Please arrange return. - MHSFND', NULL, TRUE);
