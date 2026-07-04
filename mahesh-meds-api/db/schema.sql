@@ -402,24 +402,17 @@ INSERT INTO role_permissions (role_id, permission_id)
 SELECT r.id, p.id FROM roles r, permissions p
 WHERE r.name = 'approver' AND p.action IN ('requests.approve', 'requests.reject', 'requests.edit');
 
--- Create master admin user and assign role
--- Seeded login mobile: 9876500001
-SET @admin_user_id = UUID();
-INSERT INTO users (id, name, mobile, center_id, is_active) VALUES
-  (@admin_user_id, 'System Admin', '9876500001', NULL, TRUE);
-
-INSERT INTO user_roles (user_id, role_id)
-SELECT @admin_user_id, id FROM roles WHERE name = 'master_admin';
+-- Create master admin user and assign role (now handled dynamically via BOOTSTRAP_ADMIN_MOBILE env var)
 
 -- Seed SMS templates
 INSERT INTO sms_templates (id, event_name, template_text, template_id, is_active) VALUES
   (UUID(), 'otp_login', 'Your OTP for Registration or Login for Marwari Angels-an initiative of Mahesh Foundation is {otp}', '1207164430243674445', TRUE),
   (UUID(), 'request_submitted_user', 'Mahesh Foundation: Your request is received. Token: {token_number}. We will update you after review.', NULL, TRUE),
-  (UUID(), 'request_submitted_approver', 'New device request received on Mahesh Foundation portal. Requestor:{requestor_name}. Device Requested: {items}. Please review in the system.- MHSFND', '1207178298810693025', TRUE),
+  (UUID(), 'request_submitted_approver', 'New device request received on Mahesh Foundation portal. Requestor: {requestor_name} . Device requested : {items}. Please review in the system. - MHSFND', '1207178298810693025', TRUE),
   (UUID(), 'request_approved_user', 'Mahesh Foundation: Request {token_number} is approved. {pickup_guidance}', NULL, TRUE),
   (UUID(), 'request_approved_center_manager', 'Mahesh Foundation: Request {token_number} for {requestor_name} is approved for {center_name}. Please prepare for fulfillment.', NULL, TRUE),
   (UUID(), 'request_rejected_user', 'Mahesh Foundation: Request {token_number} was not approved. Please contact support for help.', NULL, TRUE),
-  (UUID(), 'device_issued_user', 'Devices have been issued by Mahesh Foundation Medical Equipment services against Token: {token_number}. Items:{items}. -MHSFND', '1207178299880758060', TRUE),
+  (UUID(), 'device_issued_user', 'Devices have been issued by Mahesh Foundation Medical Equipment Services against Token: {token_number}. Items: {items}. Expected return date: {due_date}. - MHSFND', '1207178299880758060', TRUE),
   (UUID(), 'return_reminder_7d', 'Reminder: Devices for Token: {token_number} are due on {due_date}. Please arrange return. - MHSFND', NULL, TRUE),
   (UUID(), 'return_reminder_3d', 'Reminder: Devices for Token: {token_number} are due on {due_date}. Please arrange return. - MHSFND', NULL, TRUE),
   (UUID(), 'return_reminder_1d', 'Reminder: Devices for Token: {token_number} are due on {due_date}. Please arrange return. - MHSFND', NULL, TRUE);

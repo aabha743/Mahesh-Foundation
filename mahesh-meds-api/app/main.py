@@ -26,7 +26,7 @@ logging.basicConfig(
 
 logger = logging.getLogger(__name__)
 
-from app.database import get_db
+from app.database import get_db, SessionLocal
 from app.models import (
     Asset, AuditLog, Center, LeaseExtension, LeaseItem, LeaseRequest,
     SKU, User, OTPSession, RefreshToken, Role
@@ -180,8 +180,44 @@ app.add_middleware(
 
 
 @app.on_event("startup")
-def _startup_scheduler() -> None:
+def _startup() -> None:
     start_scheduler()
+
+    # Bootstrap master admin user from env variables if configured
+    bootstrap_admin_mobile = os.getenv("BOOTSTRAP_ADMIN_MOBILE")
+    bootstrap_admin_name = os.getenv("BOOTSTRAP_ADMIN_NAME", "System Admin")
+    if bootstrap_admin_mobile:
+        # Validate that mobile is exactly 10 digits as required by database constraints
+        if not re.match(r"^[0-9]{10}$", bootstrap_admin_mobile):
+            logger.error("Cannot bootstrap admin: BOOTSTRAP_ADMIN_MOBILE must be exactly 10 digits.")
+            return
+
+        db = SessionLocal()
+        try:
+            # Check if user already exists
+            user = db.query(User).filter(User.mobile == bootstrap_admin_mobile).first()
+            if not user:
+                # Find the master_admin role
+                admin_role = db.query(Role).filter(Role.name == "master_admin").first()
+                if not admin_role:
+                    logger.error("Cannot bootstrap admin: 'master_admin' role not found in database.")
+                else:
+                    logger.info("Bootstrapping master admin user with mobile %s", bootstrap_admin_mobile)
+                    new_admin = User(
+                        name=bootstrap_admin_name,
+                        mobile=bootstrap_admin_mobile,
+                        center_id=None,
+                        is_active=True
+                    )
+                    new_admin.roles.append(admin_role)
+                    db.add(new_admin)
+                    db.commit()
+                    logger.info("Successfully bootstrapped master admin user: %s", bootstrap_admin_name)
+        except Exception as e:
+            db.rollback()
+            logger.exception("Failed to bootstrap master admin user: %s", e)
+        finally:
+            db.close()
 
 
 @app.on_event("shutdown")
@@ -2546,12 +2582,14 @@ def update_lease_request(
         db_items = db.query(LeaseItem).filter(LeaseItem.lease_request_id == lease.id).all()
         items_names = [item.sku.name for item in db_items if item.sku]
         items_str = ", ".join(items_names) if items_names else "N/A"
+        due_date_str = lease.due_date.strftime("%B %d, %Y") if lease.due_date else "N/A"
         send_template_sms(
             mobile=lease.mobile,
             event_name="device_issued_user",
             variables={
                 "token_number": lease.token_number,
                 "items": items_str,
+                "due_date": due_date_str,
             },
             db=db,
             reference_id=lease.id,
@@ -2722,8 +2760,6 @@ def request_otp(payload: OTPRequest, request: Request, db: Session = Depends(get
     db.commit()
 
     response_payload = {"message": "OTP sent successfully", "expires_in": OTP_EXPIRE_MINUTES * 60}
-    if DEBUG_MODE:
-        response_payload["debug_otp"] = otp
     return response_payload
 
 

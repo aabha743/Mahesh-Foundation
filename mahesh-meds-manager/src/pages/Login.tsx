@@ -26,7 +26,6 @@ export default function Login() {
   const [countdown, setCountdown] = useState(0);
   const [otpValiditySeconds, setOtpValiditySeconds] = useState(300);
   const [loading, setLoading] = useState(false);
-  const [debugOtp, setDebugOtp] = useState<string | null>(null);
 
   useEffect(() => {
     if (countdown <= 0) return;
@@ -48,7 +47,6 @@ export default function Login() {
       setStep("otp");
       setCountdown(60);
       setOtpValiditySeconds(response.expires_in || 300);
-      setDebugOtp(response.debug_otp ?? null);
     } catch (err) {
       if (err instanceof Error) {
         if (err.message.includes("429") || err.message.includes("cooldown")) {
@@ -95,7 +93,6 @@ export default function Login() {
           setError("Too many attempts. Please request a new OTP.");
           setStep("phone");
           setOtp("");
-          setDebugOtp(null);
         } else if (err.message.includes("401") || err.message.includes("Invalid")) {
           setError("Invalid OTP. Please try again.");
         } else {
@@ -180,11 +177,6 @@ export default function Login() {
                     </InputOTPGroup>
                   </InputOTP>
                 </div>
-                {debugOtp && (
-                  <p className="text-xs text-center text-muted-foreground">
-                    Dev OTP: <span className="font-mono font-semibold text-foreground">{debugOtp}</span>
-                  </p>
-                )}
                 <p className="text-xs text-center text-muted-foreground">
                   OTP valid for <span className="font-semibold text-foreground">{formatCountdown(otpValiditySeconds)}</span>
                 </p>
@@ -206,7 +198,7 @@ export default function Login() {
                 )}
               </div>
               <button
-                onClick={() => { setStep("phone"); setOtp(""); setError(""); setDebugOtp(null); }}
+                onClick={() => { setStep("phone"); setOtp(""); setError(""); }}
                 className="w-full text-sm text-muted-foreground hover:text-foreground"
               >
                 &larr; Change number

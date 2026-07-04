@@ -115,7 +115,7 @@ export function PublicFooter() {
     <footer className="bg-muted/50 border-t border-border mt-auto">
       <div className="max-w-5xl mx-auto px-4 py-6 text-center text-xs text-muted-foreground space-y-1">
         <p className="leading-relaxed">
-          In emergency: <span className="text-sm font-medium text-foreground">{emergencyContactText()}</span>
+          Emergency contact: <span className="text-sm font-medium text-foreground">{emergencyContactText()}</span>
           {BRAND.contactEmail && (
             <>
               <span className="hidden sm:inline"> | </span>

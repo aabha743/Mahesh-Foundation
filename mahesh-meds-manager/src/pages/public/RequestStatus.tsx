@@ -343,7 +343,7 @@ export default function RequestStatus() {
                 )}
                 {result.status === "Rejected" && (
                   <p className="text-sm text-muted-foreground mt-2">
-                    In emergency, contact: <span className="font-medium text-foreground">{emergencyContactText()}</span>
+                    Emergency contact: <span className="font-medium text-foreground">{emergencyContactText()}</span>
                   </p>
                 )}
                 {result.status === "Active" && <p className="text-sm text-muted-foreground mt-2">Your request is currently active and devices are issued.</p>}
