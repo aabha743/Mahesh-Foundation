@@ -1,12 +1,12 @@
 import logging
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, UTC
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import and_, exists, func
 from sqlalchemy.orm import Session, joinedload
 
 from app.database import SessionLocal
-from app.models import LeaseItem, LeaseRequest, NotificationLog
+from app.models import LeaseItem, LeaseRequest, NotificationLog, SKUBlock
 from app.services.sms import format_mobile, send_template_sms
 
 logger = logging.getLogger(__name__)
@@ -47,7 +47,6 @@ def _normalize_mobile_candidates(mobile: str) -> list[str]:
     return candidates
 
 
-
 def already_sent_today(
     db: Session,
     mobile: str,
@@ -86,7 +85,6 @@ def _due_date_target_leases(db: Session) -> list[LeaseRequest]:
     )
 
 
-
 def send_due_date_reminders() -> None:
     db = SessionLocal()
     try:
@@ -120,3 +118,36 @@ def send_due_date_reminders() -> None:
     finally:
         db.close()
 
+
+def release_expired_blocks() -> None:
+    """Finds all blocked SKU blocks past their release_at time and releases them."""
+    db = SessionLocal()
+    try:
+        now_time = datetime.now(UTC).replace(tzinfo=None)
+        expired_blocks = (
+            db.query(SKUBlock)
+            .filter(SKUBlock.status == "blocked")
+            .filter(SKUBlock.release_at.is_not(None))
+            .filter(SKUBlock.release_at < now_time)
+            .all()
+        )
+        if not expired_blocks:
+            return
+
+        for block in expired_blocks:
+            req = db.get(LeaseRequest, block.lease_request_id)
+            reason = "timeout"
+            if req and req.status == "approved":
+                reason = "approved_timeout"
+            
+            block.status = "released"
+            block.release_reason = reason
+            block.release_at = now_time
+            logger.info(f"Released expired SKU block {block.id} (SKU: {block.sku_id}) for request {block.lease_request_id} as {reason}.")
+        
+        db.commit()
+    except Exception as e:
+        logger.exception(f"Error in release_expired_blocks task: {e}")
+        db.rollback()
+    finally:
+        db.close()

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { format, isAfter, isFuture, parseISO } from "date-fns";
+import { format, isAfter, isFuture, parseISO, addDays, differenceInCalendarDays } from "date-fns";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { ArrowLeft, CalendarClock } from "lucide-react";
 import { PublicFooter, PublicHeader } from "@/components/PublicHeader";
@@ -59,8 +59,28 @@ export default function LeaseExtensionForm() {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (!tokenNumber.trim()) {
+      toast.error("Please enter and check a token number first");
+      return;
+    }
+    if (!requestorName.trim()) {
+      toast.error("Please enter the requestor name");
+      return;
+    }
+    if (mobile.trim().length !== 10) {
+      toast.error("Please enter a valid 10-digit mobile number");
+      return;
+    }
+    if (aadharNumber.trim().length !== 12) {
+      toast.error("Please enter a valid 12-digit Aadhaar number");
+      return;
+    }
     if (!requestedReturnDate) {
       toast.error("Please choose a requested return date");
+      return;
+    }
+    if (!reason.trim()) {
+      toast.error("Please provide a reason for the extension");
       return;
     }
     if (!currentDueDate) {
@@ -75,6 +95,10 @@ export default function LeaseExtensionForm() {
       toast.error("Requested return date must be in the future");
       return;
     }
+    if (differenceInCalendarDays(requestedReturnDate, currentDueDate) > 14) {
+      toast.error("Extension request cannot exceed 2 weeks from the current due date");
+      return;
+    }
 
     setSubmitting(true);
     try {
@@ -84,7 +108,7 @@ export default function LeaseExtensionForm() {
         mobile: mobile.trim(),
         aadhar_number: aadharNumber.trim(),
         requested_due_date: format(requestedReturnDate, "yyyy-MM-dd"),
-        reason: reason.trim() || undefined,
+        reason: reason.trim(),
       });
       toast.success("Extension request submitted. You will be notified once reviewed.");
       navigate(`/status?token=${encodeURIComponent(tokenNumber.trim())}`);
@@ -186,7 +210,10 @@ export default function LeaseExtensionForm() {
                         selected={requestedReturnDate}
                         onSelect={setRequestedReturnDate}
                         disabled={(date) =>
-                          !isFuture(date) || (currentDueDate ? !isAfter(date, currentDueDate) : false)
+                          !isFuture(date) ||
+                          (currentDueDate
+                            ? !isAfter(date, currentDueDate) || isAfter(date, addDays(currentDueDate, 14))
+                            : false)
                         }
                         initialFocus
                         className="p-3 pointer-events-auto"
@@ -194,7 +221,7 @@ export default function LeaseExtensionForm() {
                     </PopoverContent>
                   </Popover>
                   <p className="text-xs text-muted-foreground">
-                    Choose a future date after the current due date.
+                    Choose a date up to 2 weeks after the current due date.
                   </p>
                 </div>
               </div>

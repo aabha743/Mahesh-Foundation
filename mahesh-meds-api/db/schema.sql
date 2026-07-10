@@ -176,6 +176,9 @@ CREATE TABLE lease_requests (
   requestor_name VARCHAR(150) NOT NULL,
   mobile VARCHAR(15) NOT NULL,
   aadhar_number VARCHAR(20) NOT NULL,
+  patient_name VARCHAR(150),
+  delivery_address TEXT,
+  delivery_landmark VARCHAR(255),
   reference_name VARCHAR(150),
   preferred_center_id CHAR(36),
   expected_duration VARCHAR(50),
@@ -343,16 +346,34 @@ CREATE TABLE audit_log (
 );
 
 -- ============================================
+-- 18. SKU BLOCKS
+-- ============================================
+CREATE TABLE sku_blocks (
+  id CHAR(36) PRIMARY KEY DEFAULT (UUID()),
+  lease_request_id CHAR(36) NOT NULL,
+  sku_id CHAR(36) NOT NULL,
+  center_id CHAR(36) NOT NULL,
+  status ENUM('blocked', 'released') NOT NULL DEFAULT 'blocked',
+  release_reason ENUM('timeout', 'rejected', 'approved_collected', 'approved_timeout') NULL,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  release_at DATETIME NULL,
+  FOREIGN KEY (lease_request_id) REFERENCES lease_requests(id) ON DELETE CASCADE,
+  FOREIGN KEY (sku_id) REFERENCES skus(id),
+  FOREIGN KEY (center_id) REFERENCES centers(id)
+);
+
+-- ============================================
 -- STOCK VIEW — used by landing, approver, center pages
 -- ============================================
 CREATE VIEW sku_stock_by_center AS
   SELECT
-    sku_id,
-    center_id,
-    COUNT(*) AS available_count
-  FROM assets
-  WHERE status = 'available'
-  GROUP BY sku_id, center_id;
+    a.sku_id,
+    a.center_id,
+    (COUNT(CASE WHEN a.status = 'available' THEN 1 END) -
+     COALESCE((SELECT COUNT(*) FROM sku_blocks b WHERE b.sku_id = a.sku_id AND b.center_id = a.center_id AND b.status = 'blocked'), 0)
+    ) AS available_count
+  FROM assets a
+  GROUP BY a.sku_id, a.center_id;
 
 -- ============================================
 -- ESSENTIAL SEED DATA

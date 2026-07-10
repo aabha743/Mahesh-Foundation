@@ -12,7 +12,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { PublicHeader, PublicFooter } from "@/components/PublicHeader";
 import { apiFetch } from "@/lib/api";
 
-const durations = ["1 Week", "2 Weeks", "1 Month", "3 Months", "Longer"];
+const durations = ["1 Week", "2 Weeks"];
 
 function SkuThumbnail({ name, imageUrl }: { name: string; imageUrl: string | null }) {
   const [hasError, setHasError] = useState(false);
@@ -49,7 +49,18 @@ export default function LeaseRequestForm() {
   const [skus, setSkus] = useState<Array<{ id: string; name: string; category: string | null; image_url: string | null }>>([]);
   const [centers, setCenters] = useState<Array<{ id: string; name: string }>>([]);
   const [assets, setAssets] = useState<Array<{ sku_id: string; center_id: string | null; status: string }>>([]);
-  const [formData, setFormData] = useState({ name: "", mobile: "", aadhar: "", referredBy: "", duration: "", notes: "" });
+  const [formData, setFormData] = useState({
+    name: "",
+    mobile: "",
+    aadhar: "",
+    patientName: "",
+    deliveryAddress: "",
+    deliveryLandmark: "",
+    referredBy: "",
+    preferredCenterId: "",
+    duration: "",
+    notes: ""
+  });
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [filterArea, setFilterArea] = useState("all");
   const [filterSku, setFilterSku] = useState("all");
@@ -61,6 +72,23 @@ export default function LeaseRequestForm() {
   );
 
   const selectedCount = Object.values(quantities).filter((q) => q > 0).length;
+
+  const isSplitCollectionNeeded = useMemo(() => {
+    if (!formData.preferredCenterId) return false;
+    const selectedSkuIds = Object.entries(quantities)
+      .filter(([, qty]) => qty > 0)
+      .map(([skuId]) => skuId);
+
+    return selectedSkuIds.some((skuId) => {
+      const hasLocalAsset = assets.some(
+        (asset) =>
+          asset.sku_id === skuId &&
+          asset.center_id === formData.preferredCenterId &&
+          asset.status === "available"
+      );
+      return !hasLocalAsset;
+    });
+  }, [formData.preferredCenterId, quantities, assets]);
 
   useEffect(() => {
     async function loadData() {
@@ -110,7 +138,7 @@ export default function LeaseRequestForm() {
   const updateQty = (id: string, delta: number) => {
     setQuantities((p) => {
       const cur = p[id] || 0;
-      const next = Math.max(0, cur + delta);
+      const next = Math.max(0, Math.min(1, cur + delta));
       setErrors((prev) => {
         if (!prev.items) return prev;
         const { items, ...rest } = prev;
@@ -124,7 +152,12 @@ export default function LeaseRequestForm() {
     const e: Record<string, string> = {};
     if (!formData.name.trim()) e.name = "Name is required";
     if (!/^\d{10}$/.test(formData.mobile)) e.mobile = "Enter valid 10-digit mobile";
-    if (!/^\d{12}$/.test(formData.aadhar.replace(/\s/g, ""))) e.aadhar = "Enter valid 12-digit Aadhar";
+    if (!/^\d{12}$/.test(formData.aadhar.replace(/\s/g, ""))) e.aadhar = "Enter valid 12-digit Aadhaar";
+    if (!formData.patientName.trim()) e.patientName = "Patient name is required";
+    if (!formData.deliveryAddress.trim()) e.deliveryAddress = "Delivery address is required";
+    if (!formData.deliveryLandmark.trim()) e.deliveryLandmark = "Closest landmark is required";
+    if (!formData.referredBy.trim()) e.referredBy = "Referral source is required";
+    if (!formData.preferredCenterId) e.preferredCenterId = "Preferred pickup center is required";
     if (!formData.duration) e.duration = "Select duration";
     setErrors(e);
     return Object.keys(e).length === 0;
@@ -150,7 +183,11 @@ export default function LeaseRequestForm() {
           requestor_name: formData.name.trim(),
           mobile: formData.mobile.trim(),
           aadhar_number: formData.aadhar.replace(/\s/g, ""),
-          reference_name: formData.referredBy.trim() || null,
+          patient_name: formData.patientName.trim(),
+          delivery_address: formData.deliveryAddress.trim(),
+          delivery_landmark: formData.deliveryLandmark.trim(),
+          reference_name: formData.referredBy.trim(),
+          preferred_center_id: formData.preferredCenterId,
           expected_duration: formData.duration,
           notes: formData.notes.trim() || null,
           status: "pending",
@@ -298,7 +335,7 @@ export default function LeaseRequestForm() {
                               <Minus className="h-4 w-4" />
                             </Button>
                             <span className="w-8 text-center font-medium">{qty}</span>
-                            <Button size="icon" variant="outline" className="h-9 w-9" onClick={() => updateQty(sku.id, 1)} disabled={!isAvailable}>
+                            <Button size="icon" variant="outline" className="h-9 w-9" onClick={() => updateQty(sku.id, 1)} disabled={!isAvailable || qty >= 1}>
                               <Plus className="h-4 w-4" />
                             </Button>
                           </div>
@@ -375,7 +412,7 @@ export default function LeaseRequestForm() {
                                 <Minus className="h-3 w-3" />
                               </Button>
                               <span className="w-6 text-center font-medium text-sm">{qty}</span>
-                              <Button size="icon" variant="outline" className="h-7 w-7" onClick={() => updateQty(sku.id, 1)} disabled={!isAvailable}>
+                              <Button size="icon" variant="outline" className="h-7 w-7" onClick={() => updateQty(sku.id, 1)} disabled={!isAvailable || qty >= 1}>
                                 <Plus className="h-3 w-3" />
                               </Button>
                             </div>
@@ -410,83 +447,159 @@ export default function LeaseRequestForm() {
 
         {showForm && (
           <Card className="mx-auto w-full max-w-3xl">
-            <CardContent className="p-4 md:p-6">
-              <div className="space-y-1 border-b border-border pb-4">
-                <h3 className="text-base md:text-lg font-semibold text-foreground">Your Details</h3>
-                <p className="text-sm text-muted-foreground">Enter the requestor details exactly as they should appear on the request.</p>
-              </div>
-
-              <div className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-2">
-                <div className="space-y-1.5">
-                  <Label htmlFor="requestor-name">Full Name *</Label>
-                  <Input
-                    id="requestor-name"
-                    className="min-h-11"
-                    value={formData.name}
-                    onChange={(e) => setFormData((p) => ({ ...p, name: e.target.value }))}
-                    placeholder="Enter your full name"
-                  />
-                  {errors.name && <p className="text-xs text-destructive">{errors.name}</p>}
+            <CardContent className="p-4 md:p-6 space-y-6">
+              <div>
+                <div className="space-y-1 border-b border-border pb-4">
+                  <h3 className="text-base md:text-lg font-semibold text-foreground">Requestor Details</h3>
+                  <p className="text-sm text-muted-foreground">Enter the contact details of the person filling out this form.</p>
                 </div>
 
-                <div className="space-y-1.5">
-                  <Label htmlFor="requestor-mobile">Mobile Number *</Label>
-                  <div className="flex items-stretch gap-2">
-                    <span className="inline-flex min-h-11 items-center rounded-md border border-input bg-muted px-3 text-sm text-muted-foreground">+91</span>
+                <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="requestor-name">Full Name *</Label>
                     <Input
-                      id="requestor-mobile"
+                      id="requestor-name"
                       className="min-h-11"
-                      value={formData.mobile}
-                      onChange={(e) => setFormData((p) => ({ ...p, mobile: e.target.value.replace(/\D/g, "").slice(0, 10) }))}
-                      placeholder="10-digit number"
+                      value={formData.name}
+                      onChange={(e) => setFormData((p) => ({ ...p, name: e.target.value }))}
+                      placeholder="Enter requestor full name"
                     />
+                    {errors.name && <p className="text-xs text-destructive">{errors.name}</p>}
                   </div>
-                  {errors.mobile && <p className="text-xs text-destructive">{errors.mobile}</p>}
+
+                  <div className="space-y-1.5">
+                    <Label htmlFor="requestor-mobile">Mobile Number *</Label>
+                    <div className="flex items-stretch gap-2">
+                      <span className="inline-flex min-h-11 items-center rounded-md border border-input bg-muted px-3 text-sm text-muted-foreground">+91</span>
+                      <Input
+                        id="requestor-mobile"
+                        className="min-h-11"
+                        value={formData.mobile}
+                        onChange={(e) => setFormData((p) => ({ ...p, mobile: e.target.value.replace(/\D/g, "").slice(0, 10) }))}
+                        placeholder="10-digit number"
+                      />
+                    </div>
+                    {errors.mobile && <p className="text-xs text-destructive">{errors.mobile}</p>}
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <Label htmlFor="requestor-aadhar">Aadhar Number *</Label>
+                    <Input
+                      id="requestor-aadhar"
+                      className="min-h-11"
+                      value={formData.aadhar}
+                      onChange={(e) => setFormData((p) => ({ ...p, aadhar: formatAadhar(e.target.value) }))}
+                      placeholder="XXXX XXXX XXXX"
+                      maxLength={14}
+                    />
+                    {errors.aadhar && <p className="text-xs text-destructive">{errors.aadhar}</p>}
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <Label htmlFor="requestor-referrer">Referred By *</Label>
+                    <Input
+                      id="requestor-referrer"
+                      className="min-h-11"
+                      value={formData.referredBy}
+                      onChange={(e) => setFormData((p) => ({ ...p, referredBy: e.target.value }))}
+                      placeholder="Doctor / social worker name"
+                    />
+                    {errors.referredBy && <p className="text-xs text-destructive">{errors.referredBy}</p>}
+                  </div>
                 </div>
               </div>
 
-              <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
-                <div className="space-y-1.5">
-                  <Label htmlFor="requestor-aadhar">Aadhar Number *</Label>
-                  <Input
-                    id="requestor-aadhar"
-                    className="min-h-11"
-                    value={formData.aadhar}
-                    onChange={(e) => setFormData((p) => ({ ...p, aadhar: formatAadhar(e.target.value) }))}
-                    placeholder="XXXX XXXX XXXX"
-                    maxLength={14}
-                  />
-                  {errors.aadhar && <p className="text-xs text-destructive">{errors.aadhar}</p>}
+              <div>
+                <div className="space-y-1 border-b border-border pb-4">
+                  <h3 className="text-base md:text-lg font-semibold text-foreground">Patient &amp; Delivery Details</h3>
+                  <p className="text-sm text-muted-foreground">Enter the details of the patient receiving the device and where it will be taken.</p>
                 </div>
 
-                <div className="space-y-1.5">
-                  <Label htmlFor="requestor-duration">Expected Duration *</Label>
-                  <Select value={formData.duration} onValueChange={(v) => setFormData((p) => ({ ...p, duration: v }))}>
-                    <SelectTrigger id="requestor-duration" className="min-h-11">
-                      <SelectValue placeholder="Select duration" />
-                    </SelectTrigger>
-                    <SelectContent>{durations.map((d) => <SelectItem key={d} value={d}>{d}</SelectItem>)}</SelectContent>
-                  </Select>
-                  {errors.duration && <p className="text-xs text-destructive">{errors.duration}</p>}
+                <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
+                  <div className="space-y-1.5 md:col-span-2">
+                    <Label htmlFor="patient-name">Patient's Name *</Label>
+                    <Input
+                      id="patient-name"
+                      className="min-h-11"
+                      value={formData.patientName}
+                      onChange={(e) => setFormData((p) => ({ ...p, patientName: e.target.value }))}
+                      placeholder="Name of the person receiving the device"
+                    />
+                    {errors.patientName && <p className="text-xs text-destructive">{errors.patientName}</p>}
+                  </div>
+
+                  <div className="space-y-1.5 md:col-span-2">
+                    <Label htmlFor="delivery-address">Delivery Address *</Label>
+                    <Textarea
+                      id="delivery-address"
+                      className="min-h-20 resize-y"
+                      value={formData.deliveryAddress}
+                      onChange={(e) => setFormData((p) => ({ ...p, deliveryAddress: e.target.value }))}
+                      placeholder="Full address where the device will be taken to"
+                    />
+                    {errors.deliveryAddress && <p className="text-xs text-destructive">{errors.deliveryAddress}</p>}
+                  </div>
+
+                  <div className="space-y-1.5 md:col-span-2">
+                    <Label htmlFor="delivery-landmark">Closest Landmark *</Label>
+                    <Input
+                      id="delivery-landmark"
+                      className="min-h-11"
+                      value={formData.deliveryLandmark}
+                      onChange={(e) => setFormData((p) => ({ ...p, deliveryLandmark: e.target.value }))}
+                      placeholder="Closest landmark to the delivery address"
+                    />
+                    {errors.deliveryLandmark && <p className="text-xs text-destructive">{errors.deliveryLandmark}</p>}
+                  </div>
                 </div>
               </div>
 
-              <div className="mt-4 space-y-1.5">
-                <Label htmlFor="requestor-referrer">Recommended by</Label>
-                <Input
-                  id="requestor-referrer"
-                  className="min-h-11"
-                  value={formData.referredBy}
-                  onChange={(e) => setFormData((p) => ({ ...p, referredBy: e.target.value }))}
-                  placeholder="Doctor / social worker name"
-                />
+              <div>
+                <div className="space-y-1 border-b border-border pb-4">
+                  <h3 className="text-base md:text-lg font-semibold text-foreground">Pickup Details</h3>
+                  <p className="text-sm text-muted-foreground">Select your preferred pickup center and duration.</p>
+                </div>
+
+                <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="preferred-center">Preferred Pickup Center *</Label>
+                    <Select value={formData.preferredCenterId} onValueChange={(v) => setFormData((p) => ({ ...p, preferredCenterId: v }))}>
+                      <SelectTrigger id="preferred-center" className="min-h-11">
+                        <SelectValue placeholder="Select pickup center" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {centers.map((c) => (
+                          <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    {errors.preferredCenterId && <p className="text-xs text-destructive">{errors.preferredCenterId}</p>}
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <Label htmlFor="expected-duration">Expected Duration *</Label>
+                    <Select value={formData.duration} onValueChange={(v) => setFormData((p) => ({ ...p, duration: v }))}>
+                      <SelectTrigger id="expected-duration" className="min-h-11">
+                        <SelectValue placeholder="Select duration" />
+                      </SelectTrigger>
+                      <SelectContent>{durations.map((d) => <SelectItem key={d} value={d}>{d}</SelectItem>)}</SelectContent>
+                    </Select>
+                    {errors.duration && <p className="text-xs text-destructive">{errors.duration}</p>}
+                  </div>
+                </div>
               </div>
 
-              <div className="mt-4 space-y-1.5">
+              {isSplitCollectionNeeded && (
+                <div className="rounded-md border border-warning/30 bg-warning/5 px-3 py-3 text-sm text-warning font-medium">
+                  Note: Since not all selected items are available at your preferred pickup center, if your request gets approved, you will have to collect the devices from their respective centers.
+                </div>
+              )}
+
+              <div className="space-y-1.5">
                 <Label htmlFor="request-notes">Additional Notes</Label>
                 <Textarea
                   id="request-notes"
-                  className="min-h-28 resize-y"
+                  className="min-h-24 resize-y"
                   value={formData.notes}
                   onChange={(e) => setFormData((p) => ({ ...p, notes: e.target.value }))}
                   placeholder="Any special requirements..."
@@ -494,12 +607,12 @@ export default function LeaseRequestForm() {
               </div>
 
               {errors.submit && (
-                <div className="mt-4 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+                <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
                   {errors.submit}
                 </div>
               )}
 
-              <div className="mt-6 flex flex-col-reverse gap-2 border-t border-border pt-4 md:flex-row md:justify-end">
+              <div className="flex flex-col-reverse gap-2 border-t border-border pt-4 md:flex-row md:justify-end">
                 <Button variant="outline" onClick={() => setShowForm(false)} className="min-h-12 w-full md:w-auto">Back</Button>
                 <Button className="min-h-12 w-full bg-success text-success-foreground hover:bg-success/90 md:w-auto md:min-w-48" onClick={handleSubmit} disabled={isSubmitting}>
                   {isSubmitting ? "Submitting..." : "Submit Request"}

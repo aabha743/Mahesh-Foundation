@@ -2,6 +2,9 @@ export interface ApprovalRequest {
   id: string;
   token: string;
   requestorName: string;
+  patientName?: string;
+  deliveryAddress?: string;
+  deliveryLandmark?: string;
   mobile: string;
   aadhar: string;
   items: { sku: string; qty: number }[];

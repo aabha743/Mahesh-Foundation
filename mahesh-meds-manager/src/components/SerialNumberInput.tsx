@@ -36,12 +36,8 @@ export function SerialNumberInput({
 
   useEffect(() => {
     const evaluateSupport = () => {
-      setIsMobileCapable(
-        typeof window !== "undefined" &&
-          window.innerWidth <= 768 &&
-          typeof navigator !== "undefined" &&
-          !!navigator.mediaDevices?.getUserMedia,
-      );
+      const isMobileScreen = typeof window !== "undefined" && window.innerWidth <= 768;
+      setIsMobileCapable(isMobileScreen);
     };
 
     evaluateSupport();
@@ -88,8 +84,19 @@ export function SerialNumberInput({
   const startScanner = async () => {
     if (disabled || scanning) return;
     setScanError("");
-    setScanning(true);
 
+    const hasCameraSupport = typeof navigator !== "undefined" &&
+      (!!navigator.mediaDevices?.getUserMedia ||
+       !!(navigator as any).getUserMedia ||
+       !!(navigator as any).webkitGetUserMedia ||
+       !!(navigator as any).mozGetUserMedia);
+
+    if (!hasCameraSupport) {
+      setScanError("Camera access requires a secure connection (HTTPS) or localhost. Please enter the serial number manually.");
+      return;
+    }
+
+    setScanning(true);
     try {
       const scanner = new Html5Qrcode(scannerElementId);
       scannerRef.current = scanner;

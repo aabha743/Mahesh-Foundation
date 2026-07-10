@@ -21,6 +21,7 @@ type RequestApi = {
   id: string;
   token_number: string;
   requestor_name: string;
+  patient_name?: string | null;
   mobile: string;
   status: string;
   created_at: string;
@@ -38,6 +39,7 @@ type Row = {
   id: string;
   token: string;
   requestorName: string;
+  patientName?: string | null;
   mobile: string;
   skus: string[];
   status: LeaseStatus;
@@ -96,6 +98,7 @@ export default function CenterLeaseRequests() {
               id: request.id,
               token: request.token_number,
               requestorName: request.requestor_name,
+              patientName: request.patient_name,
               mobile: request.mobile,
               skus: request.skus ?? [],
               status: formatLeaseStatus(request.status) as LeaseStatus,
@@ -163,7 +166,12 @@ export default function CenterLeaseRequests() {
             {filtered.map((row) => (
               <TableRow key={row.id}>
                 <TableCell className="font-mono text-primary text-sm">{row.token}</TableCell>
-                <TableCell>{row.requestorName}</TableCell>
+                <TableCell>
+                  <div>{row.requestorName}</div>
+                  {row.patientName && row.patientName !== row.requestorName && (
+                    <div className="text-xs text-muted-foreground">Patient: {row.patientName}</div>
+                  )}
+                </TableCell>
                 <TableCell className="text-sm">{row.mobile}</TableCell>
                 <TableCell>
                   <div className="flex flex-wrap gap-1">

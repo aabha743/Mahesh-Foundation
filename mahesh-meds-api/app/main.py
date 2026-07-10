@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 from app.database import get_db, SessionLocal
 from app.models import (
     Asset, AuditLog, Center, LeaseExtension, LeaseItem, LeaseRequest,
-    SKU, User, OTPSession, RefreshToken, Role
+    SKU, User, OTPSession, RefreshToken, Role, SKUBlock
 )
 from app.schemas import ( # Importing the schemas from the schemas.py file
     AssetCreate,
@@ -2029,6 +2029,9 @@ def create_lease_extension(
     db: Session = Depends(get_db),
 ):
     """Public lease extension request endpoint validated against the existing lease token."""
+    if not payload.reason or not payload.reason.strip():
+        raise HTTPException(status_code=400, detail="Reason for extension is required.")
+
     lease = (
         db.query(LeaseRequest)
         .filter(func.lower(LeaseRequest.token_number) == payload.token_number.strip().lower())
@@ -2055,6 +2058,9 @@ def create_lease_extension(
         raise HTTPException(status_code=400, detail="Requested return date must be in the future")
 
     requested_days = (requested_due_date - lease.due_date).days
+    if requested_days > 14:
+        raise HTTPException(status_code=400, detail="The maximum time you can request for extension is 2 weeks.")
+
     requested_duration = payload.requested_duration.strip() if payload.requested_duration and payload.requested_duration.strip() else f"{requested_days} Days"
 
     eligible, eligibility_reason, pending_exists = evaluate_extension_eligibility(db, lease)
@@ -2361,6 +2367,27 @@ def create_lease_request(
     db: Session = Depends(get_db),
 ):
     """Creates lease request + lease items and derives fulfillment-aware status (PUBLIC - no auth required)."""
+    if not payload.preferred_center_id or not payload.preferred_center_id.strip():
+        raise HTTPException(status_code=400, detail="Please select a pickup center.")
+
+    if not payload.reference_name or not payload.reference_name.strip():
+        raise HTTPException(status_code=400, detail="Please provide a referral name.")
+
+    if not payload.patient_name or not payload.patient_name.strip():
+        raise HTTPException(status_code=400, detail="Patient name is required.")
+
+    if not payload.delivery_address or not payload.delivery_address.strip():
+        raise HTTPException(status_code=400, detail="Delivery address is required.")
+
+    if not payload.delivery_landmark or not payload.delivery_landmark.strip():
+        raise HTTPException(status_code=400, detail="Delivery landmark is required.")
+
+    if payload.expected_duration not in {"1 Week", "2 Weeks"}:
+        raise HTTPException(
+            status_code=400,
+            detail="The maximum expected lease duration is 2 weeks. Allowed values: 1 Week, 2 Weeks."
+        )
+
     for item in payload.items:
         if not db.get(SKU, item.sku_id):
             raise HTTPException(status_code=400, detail=f"Invalid sku_id in items: {item.sku_id}")
@@ -2385,6 +2412,26 @@ def create_lease_request(
             lease.status,
             [item.get("asset_id") for item in items_payload],
         )
+        
+        # Create active blocks for available stock at preferred center
+        for item in items_payload:
+            sku_id = item["sku_id"]
+            stock_row = db.execute(
+                text("SELECT available_count FROM sku_stock_by_center WHERE sku_id = :sku_id AND center_id = :center_id"),
+                {"sku_id": sku_id, "center_id": lease.preferred_center_id}
+            ).first()
+            avail_count = stock_row[0] if stock_row else 0
+            if avail_count > 0:
+                db.add(
+                    SKUBlock(
+                        lease_request_id=lease.id,
+                        sku_id=sku_id,
+                        center_id=lease.preferred_center_id,
+                        status="blocked",
+                        release_at=None
+                    )
+                )
+
         db.commit()
     except IntegrityError:
         db.rollback()
@@ -2520,6 +2567,34 @@ def update_lease_request(
             if item.asset_id and item.due_date and item.returned_at is None
         ]
         lease.due_date = max(active_due_dates) if active_due_dates else None
+
+    # Update stock blocks based on request status transitions
+    if lease.status == "approved":
+        db.query(SKUBlock).filter(
+            SKUBlock.lease_request_id == lease.id,
+            SKUBlock.status == "blocked"
+        ).update({
+            "release_at": datetime.now(UTC).replace(tzinfo=None) + timedelta(hours=24)
+        }, synchronize_session=False)
+    elif lease.status == "rejected":
+        db.query(SKUBlock).filter(
+            SKUBlock.lease_request_id == lease.id,
+            SKUBlock.status == "blocked"
+        ).update({
+            "status": "released",
+            "release_reason": "rejected",
+            "release_at": datetime.now(UTC).replace(tzinfo=None)
+        }, synchronize_session=False)
+    elif lease.status in {"issued", "returned", "partially_returned"}:
+        db.query(SKUBlock).filter(
+            SKUBlock.lease_request_id == lease.id,
+            SKUBlock.status == "blocked"
+        ).update({
+            "status": "released",
+            "release_reason": "approved_collected",
+            "release_at": datetime.now(UTC).replace(tzinfo=None)
+        }, synchronize_session=False)
+
     db.commit()
     db.refresh(lease)
     action = "request_updated"
@@ -2760,6 +2835,8 @@ def request_otp(payload: OTPRequest, request: Request, db: Session = Depends(get
     db.commit()
 
     response_payload = {"message": "OTP sent successfully", "expires_in": OTP_EXPIRE_MINUTES * 60}
+    if not SMS_ENABLED:
+        response_payload["debug_otp"] = otp
     return response_payload
 
 

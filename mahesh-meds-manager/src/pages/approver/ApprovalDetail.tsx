@@ -37,6 +37,9 @@ export default function ApprovalDetail() {
             id: string;
             token_number: string;
             requestor_name: string;
+            patient_name?: string | null;
+            delivery_address?: string | null;
+            delivery_landmark?: string | null;
             mobile: string;
             aadhar_number: string;
             reference_name: string | null;
@@ -81,6 +84,9 @@ export default function ApprovalDetail() {
           id: row.id,
           token: row.token_number,
           requestorName: row.requestor_name,
+          patientName: row.patient_name || row.requestor_name,
+          deliveryAddress: row.delivery_address || "",
+          deliveryLandmark: row.delivery_landmark || "",
           mobile: row.mobile,
           aadhar: row.aadhar_number,
           items,
@@ -218,14 +224,23 @@ export default function ApprovalDetail() {
       </div>
 
       <Card>
-        <CardHeader className="pb-3"><CardTitle className="text-base">Requestor Details</CardTitle></CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm">
-            <div><span className="text-muted-foreground">Name</span><p className="font-medium">{request.requestorName}</p></div>
-            <div><span className="text-muted-foreground">Mobile</span><p className="font-medium">{request.mobile}</p></div>
-            <div><span className="text-muted-foreground">Aadhar</span><p className="font-medium">{request.aadhar}</p></div>
+        <CardHeader className="pb-3"><CardTitle className="text-base font-semibold">Request &amp; Delivery Details</CardTitle></CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-sm">
+            <div><span className="text-muted-foreground">Requestor Name</span><p className="font-medium text-foreground">{request.requestorName}</p></div>
+            <div><span className="text-muted-foreground">Mobile</span><p className="font-medium text-foreground font-mono">{request.mobile}</p></div>
+            <div><span className="text-muted-foreground">Aadhar</span><p className="font-medium text-foreground font-mono">{request.aadhar}</p></div>
           </div>
-          <p className="text-sm mt-3 italic text-muted-foreground">Referred by: {request.referredBy}</p>
+
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-sm border-t pt-3">
+            <div><span className="text-muted-foreground">Patient's Name</span><p className="font-medium text-foreground">{request.patientName || request.requestorName}</p></div>
+            <div><span className="text-muted-foreground">Referred By</span><p className="font-medium text-foreground">{request.referredBy}</p></div>
+          </div>
+
+          <div className="grid grid-cols-1 gap-3 text-sm border-t pt-3">
+            <div><span className="text-muted-foreground">Delivery Address</span><p className="font-medium text-foreground">{request.deliveryAddress || "—"}</p></div>
+            <div><span className="text-muted-foreground">Closest Landmark</span><p className="font-medium text-foreground">{request.deliveryLandmark || "—"}</p></div>
+          </div>
         </CardContent>
       </Card>
 

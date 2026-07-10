@@ -26,6 +26,7 @@ export default function Login() {
   const [countdown, setCountdown] = useState(0);
   const [otpValiditySeconds, setOtpValiditySeconds] = useState(300);
   const [loading, setLoading] = useState(false);
+  const [debugOtp, setDebugOtp] = useState<string | null>(null);
 
   useEffect(() => {
     if (countdown <= 0) return;
@@ -47,6 +48,7 @@ export default function Login() {
       setStep("otp");
       setCountdown(60);
       setOtpValiditySeconds(response.expires_in || 300);
+      setDebugOtp(response.debug_otp ?? null);
     } catch (err) {
       if (err instanceof Error) {
         if (err.message.includes("429") || err.message.includes("cooldown")) {
@@ -93,6 +95,7 @@ export default function Login() {
           setError("Too many attempts. Please request a new OTP.");
           setStep("phone");
           setOtp("");
+          setDebugOtp(null);
         } else if (err.message.includes("401") || err.message.includes("Invalid")) {
           setError("Invalid OTP. Please try again.");
         } else {
@@ -180,6 +183,11 @@ export default function Login() {
                 <p className="text-xs text-center text-muted-foreground">
                   OTP valid for <span className="font-semibold text-foreground">{formatCountdown(otpValiditySeconds)}</span>
                 </p>
+                {debugOtp && (
+                  <p className="text-xs text-center text-muted-foreground mt-1">
+                    Dev OTP: <span className="font-mono font-semibold text-foreground">{debugOtp}</span>
+                  </p>
+                )}
               </div>
               {error && <p className="text-sm text-destructive text-center">{error}</p>}
               <Button onClick={handleVerify} disabled={loading} className="w-full" size="lg">
@@ -198,7 +206,7 @@ export default function Login() {
                 )}
               </div>
               <button
-                onClick={() => { setStep("phone"); setOtp(""); setError(""); }}
+                onClick={() => { setStep("phone"); setOtp(""); setError(""); setDebugOtp(null); }}
                 className="w-full text-sm text-muted-foreground hover:text-foreground"
               >
                 &larr; Change number

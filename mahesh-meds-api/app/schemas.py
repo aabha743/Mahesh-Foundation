@@ -163,6 +163,9 @@ class LeaseRequestBase(BaseModel):
     requestor_name: str
     mobile: MobileNumber
     aadhar_number: AadharNumber
+    patient_name: str | None = None
+    delivery_address: str | None = None
+    delivery_landmark: str | None = None
     reference_name: str | None = None
     preferred_center_id: str | None = None
     expected_duration: str | None = None
@@ -179,6 +182,11 @@ class LeaseRequestItemCreate(BaseModel):
 
 
 class LeaseRequestCreate(LeaseRequestBase):
+    patient_name: str
+    delivery_address: str
+    delivery_landmark: str
+    reference_name: str
+    preferred_center_id: str
     items: list[LeaseRequestItemCreate] = Field(default_factory=list)
 
 
@@ -223,6 +231,9 @@ class PublicLeaseRequestOut(BaseModel):
     requestor_name: str
     mobile: str  # Masked pattern, raw string format
     aadhar_number: str  # Masked pattern, raw string format
+    patient_name: str | None = None
+    delivery_address: str | None = None
+    delivery_landmark: str | None = None
     reference_name: str | None = None
     preferred_center_id: str | None = None
     expected_duration: str | None = None
@@ -258,7 +269,7 @@ class LeaseExtensionBase(BaseModel):
     token_number: str
     requested_due_date: date
     requested_duration: str | None = None
-    reason: str | None = None
+    reason: str
     requestor_name: str
     mobile: MobileNumber
     aadhar_number: AadharNumber

@@ -17,6 +17,7 @@ export type LeaseRequestView = {
   id: string;
   token: string;
   requestorName: string;
+  patientName?: string | null;
   mobile: string;
   skus: string[];
   preferredCenter: string;

@@ -10,7 +10,7 @@ from sqlalchemy.engine import Connection
 
 from app.database import DATABASE_URL, engine
 
-from app.jobs.reminders import send_due_date_reminders
+from app.jobs.reminders import send_due_date_reminders, release_expired_blocks
 
 logger = logging.getLogger(__name__)
 
@@ -85,6 +85,15 @@ def _register_jobs() -> None:
         minute=0,
         id="due_date_reminders",
         misfire_grace_time=3600,
+        replace_existing=True,
+        coalesce=True,
+        max_instances=1,
+    )
+    scheduler.add_job(
+        release_expired_blocks,
+        "interval",
+        minutes=30,
+        id="release_expired_blocks",
         replace_existing=True,
         coalesce=True,
         max_instances=1,

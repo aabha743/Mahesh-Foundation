@@ -211,6 +211,10 @@ export interface LeaseRequestTokenLookup {
   requestor_name: string;
   mobile: string;
   aadhar_number: string;
+  patient_name?: string | null;
+  delivery_address?: string | null;
+  delivery_landmark?: string | null;
+  reference_name?: string | null;
   preferred_center_id: string | null;
   created_at: string;
   updated_at: string;

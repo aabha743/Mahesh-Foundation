@@ -275,6 +275,7 @@ export default function LeaseRequestsPage() {
           id: string;
           token_number: string;
           requestor_name: string;
+          patient_name?: string | null;
           mobile: string;
           preferred_center_id: string | null;
           fulfillment_centers?: Array<{ center_id: string; center_name: string }>;
@@ -290,6 +291,7 @@ export default function LeaseRequestsPage() {
       id: req.id,
       token: req.token_number,
       requestorName: req.requestor_name,
+      patientName: req.patient_name,
       mobile: req.mobile,
       skus: req.skus ?? [],
       preferredCenter:
@@ -520,7 +522,12 @@ export default function LeaseRequestsPage() {
                       {req.token}
                     </button>
                   </TableCell>
-                  <TableCell className="font-medium">{req.requestorName}</TableCell>
+                  <TableCell className="font-medium">
+                    <div>{req.requestorName}</div>
+                    {req.patientName && req.patientName !== req.requestorName && (
+                      <div className="text-xs text-muted-foreground font-normal">Patient: {req.patientName}</div>
+                    )}
+                  </TableCell>
                   <TableCell className="hidden sm:table-cell font-mono text-sm text-muted-foreground">{req.mobile}</TableCell>
                   <TableCell className="hidden md:table-cell">
                     <div className="flex flex-wrap gap-1">
@@ -588,6 +595,9 @@ export default function LeaseRequestsPage() {
                       {req.token}
                     </button>
                     <p className="font-medium text-foreground mt-1">{req.requestorName}</p>
+                    {req.patientName && req.patientName !== req.requestorName && (
+                      <p className="text-xs text-muted-foreground">Patient: {req.patientName}</p>
+                    )}
                   </div>
                   <Badge variant="outline" className={cn("border", statusColors[req.status])}>{req.status}</Badge>
                 </div>
@@ -764,6 +774,28 @@ export default function LeaseRequestsPage() {
                         Closed — approximate days from submission to return: {durationSummary.approx} (issue timestamp not found in activity log).
                       </p>
                     )}
+                  </div>
+
+                  <div className="rounded-lg border bg-muted/30 p-4 space-y-3 text-sm">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Request &amp; Delivery Info</p>
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      <div>
+                        <span className="text-muted-foreground">Patient's Name</span>
+                        <p className="font-medium">{tokenLease.patient_name || tokenLease.requestor_name}</p>
+                      </div>
+                      <div>
+                        <span className="text-muted-foreground">Referred By</span>
+                        <p className="font-medium">{tokenLease.reference_name || "—"}</p>
+                      </div>
+                      <div className="sm:col-span-2">
+                        <span className="text-muted-foreground">Delivery Address</span>
+                        <p className="font-medium">{tokenLease.delivery_address || "—"}</p>
+                      </div>
+                      <div className="sm:col-span-2">
+                        <span className="text-muted-foreground">Closest Landmark</span>
+                        <p className="font-medium">{tokenLease.delivery_landmark || "—"}</p>
+                      </div>
+                    </div>
                   </div>
 
                   {(tokenLease.approval_comments || tokenLease.rejection_reason) && (

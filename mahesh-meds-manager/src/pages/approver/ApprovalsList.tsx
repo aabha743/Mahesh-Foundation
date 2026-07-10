@@ -50,6 +50,9 @@ export default function ApprovalsList() {
             id: string;
             token_number: string;
             requestor_name: string;
+            patient_name?: string | null;
+            delivery_address?: string | null;
+            delivery_landmark?: string | null;
             mobile: string;
             aadhar_number: string;
             reference_name: string | null;
@@ -94,6 +97,9 @@ export default function ApprovalsList() {
             id: r.id,
             token: r.token_number,
             requestorName: r.requestor_name,
+            patientName: r.patient_name || r.requestor_name,
+            deliveryAddress: r.delivery_address || "",
+            deliveryLandmark: r.delivery_landmark || "",
             mobile: r.mobile,
             aadhar: r.aadhar_number,
             items,
@@ -252,8 +258,13 @@ export default function ApprovalsList() {
         </div>
 
         <div className="text-sm space-y-1">
-          <p><span className="text-muted-foreground">Requestor:</span> {req.requestorName}</p>
-                  <p><span className="text-muted-foreground">Mobile:</span> {req.mobile} &nbsp; <span className="text-muted-foreground">Aadhar:</span> {req.aadhar}</p>
+          <p>
+            <span className="text-muted-foreground">Requestor:</span> {req.requestorName}
+            {req.patientName && req.patientName !== req.requestorName && (
+              <span className="text-muted-foreground text-xs ml-2"> (Patient: {req.patientName})</span>
+            )}
+          </p>
+          <p><span className="text-muted-foreground">Mobile:</span> {req.mobile} &nbsp; <span className="text-muted-foreground">Aadhar:</span> {req.aadhar}</p>
         </div>
 
         <div className="flex flex-wrap gap-1.5">
