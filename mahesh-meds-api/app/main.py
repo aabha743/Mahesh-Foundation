@@ -858,19 +858,19 @@ def extension_history_summary(db: Session, lease_request_id: str) -> list[dict]:
     ]
 
 
-def has_current_approved_extension(db: Session, lease: LeaseRequest) -> bool:
+MAX_APPROVED_EXTENSIONS_PER_LEASE = 2
+
+
+def count_approved_extensions(db: Session, lease: LeaseRequest) -> int:
     ensure_lease_extension_schema(db)
-    approved = (
+    return (
         db.query(LeaseExtension)
         .filter(
             LeaseExtension.lease_request_id == lease.id,
             LeaseExtension.status == "approved",
-            LeaseExtension.approved_due_date.is_not(None),
         )
-        .order_by(LeaseExtension.reviewed_at.desc(), LeaseExtension.requested_at.desc())
-        .first()
+        .count()
     )
-    return bool(approved and lease.due_date and approved.approved_due_date == lease.due_date)
 
 
 def evaluate_extension_eligibility(
@@ -893,8 +893,8 @@ def evaluate_extension_eligibility(
     if pending_exists:
         return False, "An extension request is already pending for this token.", True
 
-    if has_current_approved_extension(db, lease):
-        return False, "This lease has already been extended.", False
+    if count_approved_extensions(db, lease) >= MAX_APPROVED_EXTENSIONS_PER_LEASE:
+        return False, f"This lease has reached the maximum allowed extensions ({MAX_APPROVED_EXTENSIONS_PER_LEASE}).", False
 
     if lease.status not in ACTIVE_LEASE_DB_STATUSES:
         return False, "Extensions are available only for active leases.", False
