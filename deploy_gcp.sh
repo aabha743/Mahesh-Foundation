@@ -33,18 +33,20 @@ sudo mysql -e "CREATE USER IF NOT EXISTS 'mahesh_app'@'localhost' IDENTIFIED BY 
 sudo mysql -e "GRANT ALL PRIVILEGES ON mahesh_meds.* TO 'mahesh_app'@'localhost';"
 sudo mysql -e "FLUSH PRIVILEGES;"
 
+PROJECT_ROOT="$(pwd)"
+
 if [ -f /var/www/mahesh-meds-api/db/schema.sql ]; then
     echo "Importing schema into mahesh_meds..."
-    sudo mysql mahesh_meds < /var/www/mahesh-meds-api/db/schema.sql
-elif [ -f ./mahesh-meds-api/db/schema.sql ]; then
+    sudo mysql --force mahesh_meds < /var/www/mahesh-meds-api/db/schema.sql || true
+elif [ -f "${PROJECT_ROOT}/mahesh-meds-api/db/schema.sql" ]; then
     echo "Importing schema into mahesh_meds from local path..."
-    sudo mysql mahesh_meds < ./mahesh-meds-api/db/schema.sql
+    sudo mysql --force mahesh_meds < "${PROJECT_ROOT}/mahesh-meds-api/db/schema.sql" || true
 fi
 
 echo "=== Step 4: Setting up Backend (mahesh-meds-api) ==="
 sudo mkdir -p /var/www/mahesh-meds-api
-if [ -d "./mahesh-meds-api" ]; then
-    sudo cp -r ./mahesh-meds-api/* /var/www/mahesh-meds-api/
+if [ -d "${PROJECT_ROOT}/mahesh-meds-api" ]; then
+    sudo cp -r "${PROJECT_ROOT}/mahesh-meds-api/"* /var/www/mahesh-meds-api/
 fi
 
 cd /var/www/mahesh-meds-api
@@ -90,8 +92,8 @@ sudo systemctl restart mahesh-meds-api.service
 
 echo "=== Step 6: Setting up Frontend Bundle ==="
 sudo mkdir -p /var/www/mahesh-meds-manager
-if [ -d "./mahesh-meds-manager/dist" ]; then
-    sudo cp -r ./mahesh-meds-manager/dist/* /var/www/mahesh-meds-manager/
+if [ -d "${PROJECT_ROOT}/mahesh-meds-manager/dist" ]; then
+    sudo cp -r "${PROJECT_ROOT}/mahesh-meds-manager/dist/"* /var/www/mahesh-meds-manager/
 fi
 sudo chown -R www-data:www-data /var/www/mahesh-meds-manager
 
