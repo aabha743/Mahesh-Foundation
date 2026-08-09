@@ -61,11 +61,13 @@ JWT_SECRET=$(python3 -c "import secrets; print(secrets.token_hex(32))")
 sudo cat <<EOF | sudo tee /var/www/mahesh-meds-api/.env
 DATABASE_URL=mysql+pymysql://mahesh_app:${DB_PASS}@127.0.0.1:3306/mahesh_meds
 DEBUG=false
-COOKIE_SECURE=true
+COOKIE_SECURE=false
 COOKIE_SAMESITE=lax
 SMS_ENABLED=false
 JWT_SECRET=${JWT_SECRET}
-CORS_ORIGINS=https://maheshfoundation-medical.com,https://www.maheshfoundation-medical.com
+BOOTSTRAP_ADMIN_MOBILE=7815972631
+BOOTSTRAP_ADMIN_NAME=Abha
+CORS_ORIGINS=http://35.222.32.191,https://maheshfoundation-medical.com,https://www.maheshfoundation-medical.com
 EOF
 
 sudo chown -R www-data:www-data /var/www/mahesh-meds-api
