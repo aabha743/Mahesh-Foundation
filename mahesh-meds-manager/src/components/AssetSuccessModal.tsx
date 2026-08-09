@@ -1,9 +1,9 @@
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Printer, Plus, CheckCircle } from "lucide-react";
+import { Download, Plus, CheckCircle } from "lucide-react";
 import { AssetStickerLabel } from "@/components/assets/AssetStickerLabel";
-import { printSticker } from "@/lib/printSticker";
+import { downloadStickerPNG } from "@/lib/downloadSticker";
 
 interface AssetSuccessModalProps {
   open: boolean;
@@ -13,16 +13,15 @@ interface AssetSuccessModalProps {
     skuName: string;
     centerName: string;
   } | null;
-  onPrintSticker: () => void;
+  onPrintSticker?: () => void;
   onAddAnother: () => void;
 }
 
-export function AssetSuccessModal({ open, onClose, assetData, onPrintSticker, onAddAnother }: AssetSuccessModalProps) {
+export function AssetSuccessModal({ open, onClose, assetData, onAddAnother }: AssetSuccessModalProps) {
   if (!assetData) return null;
 
-  const handlePrint = () => {
-    printSticker(assetData);
-    onPrintSticker();
+  const handleDownload = () => {
+    downloadStickerPNG(assetData);
   };
 
   return (
@@ -34,7 +33,7 @@ export function AssetSuccessModal({ open, onClose, assetData, onPrintSticker, on
             Asset Created Successfully
           </DialogTitle>
         </DialogHeader>
-        
+
         <div className="space-y-4">
           <div className="bg-muted/50 rounded-lg p-4 space-y-3">
             <div className="flex items-center justify-between">
@@ -53,7 +52,7 @@ export function AssetSuccessModal({ open, onClose, assetData, onPrintSticker, on
 
           <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
             <p className="text-sm text-blue-800">
-              Print a sticker for this asset to attach to the physical device.
+              Download the PNG sticker image for this asset to print or attach to the physical device.
             </p>
           </div>
 
@@ -67,20 +66,16 @@ export function AssetSuccessModal({ open, onClose, assetData, onPrintSticker, on
           </div>
 
           <div className="flex flex-col md:flex-row gap-2 pt-2">
-            <Button onClick={handlePrint} className="flex-1 w-full md:w-auto">
-              <Printer className="h-4 w-4 mr-2" />
-              Print Sticker
+            <Button onClick={handleDownload} className="flex-1 w-full md:w-auto">
+              <Download className="h-4 w-4 mr-2" />
+              Download Sticker (PNG)
             </Button>
             <Button variant="outline" onClick={onClose} className="flex-1 w-full md:w-auto">
               Done
             </Button>
           </div>
-          
-          <Button 
-            variant="ghost" 
-            onClick={onAddAnother} 
-            className="w-full"
-          >
+
+          <Button variant="ghost" onClick={onAddAnother} className="w-full">
             <Plus className="h-4 w-4 mr-2" />
             Add Another Asset
           </Button>

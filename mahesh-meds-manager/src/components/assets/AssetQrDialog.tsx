@@ -1,9 +1,9 @@
-import { Printer } from "lucide-react";
+import { Download } from "lucide-react";
 import { AssetStickerLabel } from "@/components/assets/AssetStickerLabel";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import type { AssetView } from "@/lib/uiTypes";
-import { printSticker } from "@/lib/printSticker";
+import { downloadStickerPNG } from "@/lib/downloadSticker";
 
 type AssetQrDialogProps = {
   asset: AssetView | null;
@@ -20,7 +20,7 @@ export function AssetQrDialog({ asset, open, onOpenChange }: AssetQrDialogProps)
         <DialogHeader>
           <DialogTitle>{asset.skuName}</DialogTitle>
           <DialogDescription>
-            Asset QR label for {asset.serialNumber}. Print this in the same 60x40mm sticker format used after asset creation.
+            Asset QR label for {asset.serialNumber}. Download this PNG image for printing or digital archiving.
           </DialogDescription>
         </DialogHeader>
 
@@ -43,9 +43,18 @@ export function AssetQrDialog({ asset, open, onOpenChange }: AssetQrDialogProps)
         </div>
 
         <div className="flex justify-end">
-          <Button className="w-full md:w-auto" onClick={() => printSticker({ serialNumber: asset.serialNumber, skuName: asset.skuName, centerName: asset.assignedCenter })}>
-            <Printer className="mr-2 h-4 w-4" />
-            Print sticker
+          <Button
+            className="w-full md:w-auto"
+            onClick={() =>
+              downloadStickerPNG({
+                serialNumber: asset.serialNumber,
+                skuName: asset.skuName,
+                centerName: asset.assignedCenter,
+              })
+            }
+          >
+            <Download className="mr-2 h-4 w-4" />
+            Download Sticker (PNG)
           </Button>
         </div>
       </DialogContent>
