@@ -17,7 +17,11 @@ if not DATABASE_URL:
         raise RuntimeError("DATABASE_URL must be set when DEBUG=false")
 
 # pool_pre_ping recovers stale connections after DB restarts or idle timeouts.
-engine = create_engine(DATABASE_URL, pool_pre_ping=True)
+connect_args = {}
+if DATABASE_URL and ("aivencloud.com" in DATABASE_URL or "railway" in DATABASE_URL):
+    connect_args["ssl"] = {}
+
+engine = create_engine(DATABASE_URL, pool_pre_ping=True, connect_args=connect_args)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
