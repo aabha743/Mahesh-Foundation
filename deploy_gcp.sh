@@ -93,9 +93,10 @@ sudo systemctl restart mahesh-meds-api.service
 echo "=== Step 6: Setting up Frontend Bundle ==="
 sudo mkdir -p /var/www/mahesh-meds-manager
 if [ -d "${PROJECT_ROOT}/mahesh-meds-manager/dist" ]; then
-    sudo cp -r "${PROJECT_ROOT}/mahesh-meds-manager/dist/"* /var/www/mahesh-meds-manager/
+    sudo cp -r "${PROJECT_ROOT}/mahesh-meds-manager/dist/." /var/www/mahesh-meds-manager/
 fi
 sudo chown -R www-data:www-data /var/www/mahesh-meds-manager
+sudo chmod -R 755 /var/www/mahesh-meds-manager
 
 echo "=== Step 7: Configuring Nginx Reverse Proxy ==="
 sudo cat <<EOF | sudo tee /etc/nginx/sites-available/mahesh-meds
@@ -106,8 +107,16 @@ server {
     root /var/www/mahesh-meds-manager;
     index index.html;
 
+    include /etc/nginx/mime.types;
+
     location / {
         try_files \$uri \$uri/ /index.html;
+    }
+
+    location /assets/ {
+        alias /var/www/mahesh-meds-manager/assets/;
+        expires 1y;
+        access_log off;
     }
 
     location ~ ^/(api|auth|me|health|docs|openapi.json) {
