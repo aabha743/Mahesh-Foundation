@@ -93,7 +93,11 @@ sudo systemctl restart mahesh-meds-api.service
 echo "=== Step 6: Setting up Frontend Bundle ==="
 sudo mkdir -p /var/www/mahesh-meds-manager
 if [ -d "${PROJECT_ROOT}/mahesh-meds-manager/dist" ]; then
-    sudo cp -r "${PROJECT_ROOT}/mahesh-meds-manager/dist/." /var/www/mahesh-meds-manager/
+    echo "Copying pre-built frontend dist bundle to /var/www/mahesh-meds-manager..."
+    sudo cp -r "${PROJECT_ROOT}/mahesh-meds-manager/dist/"* /var/www/mahesh-meds-manager/
+else
+    echo "ERROR: mahesh-meds-manager/dist folder not found!"
+    exit 1
 fi
 sudo chown -R www-data:www-data /var/www/mahesh-meds-manager
 sudo chmod -R 755 /var/www/mahesh-meds-manager
@@ -111,12 +115,6 @@ server {
 
     location / {
         try_files \$uri \$uri/ /index.html;
-    }
-
-    location /assets/ {
-        alias /var/www/mahesh-meds-manager/assets/;
-        expires 1y;
-        access_log off;
     }
 
     location ~ ^/(api|auth|me|health|docs|openapi.json) {
