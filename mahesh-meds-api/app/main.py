@@ -2835,8 +2835,6 @@ def request_otp(payload: OTPRequest, request: Request, db: Session = Depends(get
     db.commit()
 
     response_payload = {"message": "OTP sent successfully", "expires_in": OTP_EXPIRE_MINUTES * 60}
-    if not SMS_ENABLED:
-        response_payload["debug_otp"] = otp
     return response_payload
 
 
