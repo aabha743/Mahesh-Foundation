@@ -1,17 +1,28 @@
-import React from "react";
+import { QRCodeSVG } from "qrcode.react";
 
-interface AssetStickerLabelProps {
-  assetTag?: string;
-  serialNumber?: string;
-  skuName?: string;
-}
+export type StickerPrintData = {
+  serialNumber: string;
+  skuName: string;
+  centerName: string;
+};
 
-export function AssetStickerLabel({ assetTag, serialNumber, skuName }: AssetStickerLabelProps) {
+type AssetStickerLabelProps = StickerPrintData & {
+  className?: string;
+  printRoot?: boolean;
+};
+
+export function AssetStickerLabel({ serialNumber, skuName, centerName, className, printRoot = false }: AssetStickerLabelProps) {
   return (
-    <div className="p-4 border rounded bg-white text-black text-xs font-mono">
-      <div>TAG: {assetTag ?? "N/A"}</div>
-      <div>SN: {serialNumber ?? "N/A"}</div>
-      <div>ITEM: {skuName ?? "N/A"}</div>
+    <div className={className} id={printRoot ? "print-sticker-content" : undefined}>
+      <div className="sticker-shell">
+        <div className="sticker-foundation">Mahesh Foundation</div>
+        <div className="sticker-sku">{skuName}</div>
+        <div className="sticker-qr">
+          <QRCodeSVG value={serialNumber} size={76} includeMargin level="M" />
+        </div>
+        <div className="sticker-serial">{serialNumber}</div>
+        <div className="sticker-center">{centerName}</div>
+      </div>
     </div>
   );
 }
