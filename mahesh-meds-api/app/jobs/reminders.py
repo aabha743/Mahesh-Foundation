@@ -139,6 +139,7 @@ def release_expired_blocks() -> None:
             reason = "timeout"
             if req and req.status == "approved":
                 reason = "approved_timeout"
+                req.status = "expired"
             
             block.status = "released"
             block.release_reason = reason
