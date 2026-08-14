@@ -90,17 +90,21 @@ export default function LeaseRequestForm() {
     });
   }, [formData.preferredCenterId, quantities, assets]);
 
+  const [stockItems, setStockItems] = useState<Array<{ sku_id: string; center_id: string; available_count: number }>>([]);
+
   useEffect(() => {
     async function loadData() {
       try {
-        const [centersResp, skusResp, assetsResp] = await Promise.all([
+        const [centersResp, skusResp, assetsResp, stockResp] = await Promise.all([
           apiFetch<Array<{ id: string; name: string }>>("/api/v1/centers"),
           apiFetch<Array<{ id: string; name: string; category: string | null; image_url: string | null }>>("/api/v1/skus"),
           apiFetch<Array<{ sku_id: string; center_id: string | null; status: string }>>("/api/v1/assets"),
+          apiFetch<Array<{ sku_id: string; center_id: string; available_count: number }>>("/api/v1/stock"),
         ]);
         setCenters(centersResp);
         setSkus(skusResp);
         setAssets(assetsResp);
+        setStockItems(stockResp);
       } catch {
         // keep page functional; submit will still fail clearly if API is unavailable
       }
@@ -111,10 +115,11 @@ export default function LeaseRequestForm() {
   const filteredSKUs = useMemo(() => {
     const selectedCenterId = filterArea === "all" ? null : centerNameToId[filterArea];
     const availableBySku = new Map<string, number>();
-    assets.forEach((asset) => {
-      if (asset.status !== "available") return;
-      if (selectedCenterId && asset.center_id !== selectedCenterId) return;
-      availableBySku.set(asset.sku_id, (availableBySku.get(asset.sku_id) ?? 0) + 1);
+
+    stockItems.forEach((st) => {
+      if (st.available_count <= 0) return;
+      if (selectedCenterId && st.center_id !== selectedCenterId) return;
+      availableBySku.set(st.sku_id, (availableBySku.get(st.sku_id) ?? 0) + st.available_count);
     });
 
     return skus.filter((sku) => {
@@ -128,7 +133,7 @@ export default function LeaseRequestForm() {
       }
       return true;
     });
-  }, [skus, assets, filterArea, filterSku, searchTerm, centerNameToId]);
+  }, [skus, stockItems, filterArea, filterSku, searchTerm, centerNameToId]);
 
   const centerIdToName = useMemo(
     () => Object.fromEntries(centers.map((center) => [center.id, center.name])),
@@ -286,19 +291,18 @@ export default function LeaseRequestForm() {
                 <div className="md:hidden space-y-3 p-4">
                   {filteredSKUs.map((sku) => {
                     const selectedCenterId = filterArea === "all" ? null : centerNameToId[filterArea];
-                    const matchingAssets = assets.filter((asset) => {
-                      if (asset.sku_id !== sku.id || asset.status !== "available") return false;
-                      if (selectedCenterId && asset.center_id !== selectedCenterId) return false;
+                    const matchingStock = stockItems.filter((st) => {
+                      if (st.sku_id !== sku.id || st.available_count <= 0) return false;
+                      if (selectedCenterId && st.center_id !== selectedCenterId) return false;
                       return true;
                     });
-                    const availableCount = matchingAssets.length;
+                    const availableCount = matchingStock.reduce((acc, curr) => acc + curr.available_count, 0);
                     const isAvailable = availableCount > 0;
                     const availabilityLabel = availableCount === 0 ? "Unavailable" : availableCount <= 2 ? "Limited" : "Available";
                     const availableCenters = Array.from(
                       new Set(
-                        matchingAssets
-                          .map((asset) => asset.center_id)
-                          .filter((centerId): centerId is string => Boolean(centerId))
+                        matchingStock
+                          .map((st) => st.center_id)
                           .map((centerId) => centerIdToName[centerId])
                           .filter((name): name is string => Boolean(name)),
                       ),
@@ -363,19 +367,18 @@ export default function LeaseRequestForm() {
                   <TableBody>
                     {filteredSKUs.map((sku) => {
                       const selectedCenterId = filterArea === "all" ? null : centerNameToId[filterArea];
-                      const matchingAssets = assets.filter((asset) => {
-                        if (asset.sku_id !== sku.id || asset.status !== "available") return false;
-                        if (selectedCenterId && asset.center_id !== selectedCenterId) return false;
+                      const matchingStock = stockItems.filter((st) => {
+                        if (st.sku_id !== sku.id || st.available_count <= 0) return false;
+                        if (selectedCenterId && st.center_id !== selectedCenterId) return false;
                         return true;
                       });
-                      const availableCount = matchingAssets.length;
+                      const availableCount = matchingStock.reduce((acc, curr) => acc + curr.available_count, 0);
                       const isAvailable = availableCount > 0;
                       const availabilityLabel = availableCount === 0 ? "Unavailable" : availableCount <= 2 ? "Limited" : "Available";
                       const availableCenters = Array.from(
                         new Set(
-                          matchingAssets
-                            .map((asset) => asset.center_id)
-                            .filter((centerId): centerId is string => Boolean(centerId))
+                          matchingStock
+                            .map((st) => st.center_id)
                             .map((centerId) => centerIdToName[centerId])
                             .filter((name): name is string => Boolean(name)),
                         ),
