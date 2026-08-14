@@ -390,7 +390,7 @@ export default function LeaseRequestForm() {
                             </div>
                           </TableCell>
                           <TableCell className="text-sm text-muted-foreground">
-                            {availableCenters.length > 0 ? availableCenters.join(" | ") : "â€”"}
+                            {availableCenters.length > 0 ? availableCenters.join(" | ") : "-"}
                           </TableCell>
                           <TableCell>
                             <Badge
