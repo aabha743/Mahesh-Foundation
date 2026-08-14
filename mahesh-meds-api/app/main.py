@@ -2632,13 +2632,14 @@ def update_lease_request(
 
     if payload.status == "approved":
         fulfillment_centers, fulfillment_message = build_fulfillment_plan(db, lease.id)
+        center_names_str = fulfillment_center_names(fulfillment_centers) or "our center"
         send_template_sms(
             mobile=lease.mobile,
             event_name="request_approved_user",
             variables={
                 "token_number": lease.token_number,
-                "center_name": fulfillment_center_names(fulfillment_centers),
-                "pickup_guidance": fulfillment_message or "Our team will contact you with pickup details.",
+                "center_name": center_names_str,
+                "pickup_guidance": f"{center_names_str} team",
             },
             db=db,
             reference_id=lease.id,
