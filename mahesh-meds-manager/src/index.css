@@ -166,8 +166,38 @@
 
 .sticker-center {
   text-align: center;
-  font-size: 7pt;
+  font-size: 8pt;
   line-height: 1.1;
+  color: #333;
+}
+
+/* QR Camera Viewfinder Styling */
+[id^="serial-qr-"] {
+  width: 100% !important;
+  max-width: 280px !important;
+  margin: 0 auto !important;
+  border: 0 !important;
+  position: relative !important;
+  background: #000 !important;
+  border-radius: 0.75rem !important;
+  overflow: hidden !important;
+}
+
+[id^="serial-qr-"] video {
+  width: 100% !important;
+  height: 100% !important;
+  object-fit: cover !important;
+  border-radius: 0.75rem !important;
+}
+
+[id^="serial-qr-"] img {
+  display: none !important;
+}
+
+[id^="serial-qr-"] select,
+[id^="serial-qr-"] button,
+[id^="serial-qr-"] a {
+  display: none !important;
 }
 
 @media print {

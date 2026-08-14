@@ -166,23 +166,30 @@ export function SerialNumberInput({
   };
 
   return (
-    <div className={cn("space-y-2", className)}>
-      <div className="flex gap-2 items-start">
+    <div className={cn("space-y-2.5", className)}>
+      <div className="flex items-center gap-2">
         <div className="relative flex-1">
           <Input
             value={value}
             onChange={(e) => onChange(e.target.value)}
             placeholder={placeholder}
             disabled={disabled}
-            className={cn(scanSuccess && "border-success ring-1 ring-success/30")}
+            className={cn("pr-9 transition-all", scanSuccess && "border-success ring-1 ring-success/30")}
           />
           {scanSuccess && (
-            <CheckCircle2 className="absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-success" />
+            <CheckCircle2 className="absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-success animate-in fade-in zoom-in" />
           )}
         </div>
-        <Button type="button" variant="outline" onClick={() => void startScanner()} disabled={disabled || scanning}>
-          <Camera className="mr-2 h-4 w-4" />
-          Scan QR
+        <Button
+          type="button"
+          variant={scanning ? "secondary" : "outline"}
+          onClick={() => void (scanning ? cancelScanner() : startScanner())}
+          disabled={disabled}
+          className="shrink-0"
+        >
+          <Camera className="h-4 w-4 sm:mr-1.5" />
+          <span className="hidden sm:inline">{scanning ? "Cancel" : "Scan QR"}</span>
+          <span className="sm:hidden">{scanning ? "Cancel" : "Scan"}</span>
         </Button>
       </div>
 
@@ -191,23 +198,26 @@ export function SerialNumberInput({
       </p>
 
       {scanning && (
-        <div className="rounded-lg border bg-muted/20 p-4 space-y-3">
-          <div
-            id={scannerElementId}
-            className="mx-auto max-w-[280px] overflow-hidden rounded-lg border bg-black"
-          />
-          <p className="text-sm text-center text-muted-foreground">
-            Point camera at the QR code on the asset
-          </p>
-          <div className="flex justify-center">
-            <Button type="button" variant="outline" onClick={() => void cancelScanner()}>
-              Cancel
+        <div className="rounded-xl border border-primary/20 bg-card p-4 shadow-lg space-y-3 animate-in fade-in slide-in-from-top-2">
+          <div className="relative mx-auto w-full max-w-[280px] overflow-hidden rounded-xl bg-black shadow-inner">
+            <div
+              id={scannerElementId}
+              className="w-full h-full min-h-[220px]"
+            />
+          </div>
+          <div className="flex items-center justify-center gap-2 text-xs font-medium text-muted-foreground">
+            <Camera className="h-3.5 w-3.5 animate-pulse text-primary" />
+            <span>Point camera directly at the QR sticker</span>
+          </div>
+          <div className="flex justify-center pt-1">
+            <Button type="button" variant="ghost" size="sm" onClick={() => void cancelScanner()}>
+              Stop Camera
             </Button>
           </div>
         </div>
       )}
 
-      {scanError && <p className="text-xs text-destructive">{scanError}</p>}
+      {scanError && <p className="text-xs font-medium text-destructive animate-in fade-in">{scanError}</p>}
     </div>
   );
 }
