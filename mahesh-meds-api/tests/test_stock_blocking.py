@@ -6,16 +6,24 @@ from app.jobs.reminders import release_expired_blocks
 
 class StockBlockingTests(unittest.TestCase):
     def setUp(self):
-        self.db = SessionLocal()
-        self.center = self.db.query(Center).first()
-        self.sku = self.db.query(SKU).first()
+        try:
+            self.db = SessionLocal()
+            self.center = self.db.query(Center).first()
+            self.sku = self.db.query(SKU).first()
+        except Exception as e:
+            self.skipTest(f"Database connection unavailable: {e}")
+            return
         
         if not self.center or not self.sku:
             self.skipTest("No Center or SKU available in database to run tests")
 
     def tearDown(self):
-        self.db.rollback()
-        self.db.close()
+        if hasattr(self, 'db') and self.db:
+            try:
+                self.db.rollback()
+                self.db.close()
+            except Exception:
+                pass
 
     def test_block_creation_and_release_lifecycle(self):
         token = "TEST-BLOCK-XYZ"

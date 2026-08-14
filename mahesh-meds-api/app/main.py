@@ -119,6 +119,12 @@ from app.services.sms import SMS_ENABLED, send_template_sms
 app = FastAPI(title="Mahesh Meds API", version="0.2.0")
 
 
+@app.get("/health")
+@app.get("/api/health")
+def health_check():
+    return {"status": "ok", "service": "mahesh-meds-api", "timestamp": datetime.now(UTC).isoformat()}
+
+
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     # Log the full traceback internally
@@ -2648,6 +2654,7 @@ def update_lease_request(
             variables={
                 "token_number": lease.token_number,
                 "rejection_reason": lease.rejection_reason or "",
+                "contact_info": lease.rejection_reason or "Mahesh Foundation team",
             },
             db=db,
             reference_id=lease.id,
@@ -2802,7 +2809,8 @@ def request_otp(payload: OTPRequest, request: Request, db: Session = Depends(get
         variables={"otp": otp},
         db=db,
     )
-    if not delivery_ok and SMS_ENABLED:
+    sms_enabled_check = os.getenv("SMS_ENABLED", "true").lower() == "true"
+    if not delivery_ok and sms_enabled_check:
         otp_session.is_used = True
         audit_otp_event(
             db,
@@ -2829,7 +2837,7 @@ def request_otp(payload: OTPRequest, request: Request, db: Session = Depends(get
             "purpose": purpose,
             "expires_at": expires_at.isoformat(),
             "delivery_status": "sent" if delivery_ok else "skipped",
-            "sms_enabled": SMS_ENABLED,
+            "sms_enabled": sms_enabled_check,
         }
     )
     db.commit()

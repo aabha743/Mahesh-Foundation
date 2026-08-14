@@ -58,17 +58,56 @@ sudo .venv/bin/pip install -r requirements.txt -r requirements.dev.txt
 
 JWT_SECRET=$(python3 -c "import secrets; print(secrets.token_hex(32))")
 
-sudo cat <<EOF | sudo tee /var/www/mahesh-meds-api/.env
+if [ ! -f /var/www/mahesh-meds-api/.env ]; then
+    echo "Creating initial /var/www/mahesh-meds-api/.env file..."
+    sudo cat <<EOF | sudo tee /var/www/mahesh-meds-api/.env
 DATABASE_URL=mysql+pymysql://mahesh_app:${DB_PASS}@127.0.0.1:3306/mahesh_meds
 DEBUG=false
-COOKIE_SECURE=false
+COOKIE_SECURE=true
 COOKIE_SAMESITE=lax
-SMS_ENABLED=false
+SMS_ENABLED=true
+SMS_PEID=1201159102043751902
+SMS_API_KEY=a620ec90-84b6-4bc5-b28d-21303df51b49
+SMS_USERNAME=oz07-hostello
+SMS_SENDER=MHSFND
+SMS_BASE_URL=http://www.bulksmsapps.com/api/apismsv2.aspx
+SMS_TIMEOUT_SECONDS=10
 JWT_SECRET=${JWT_SECRET}
 BOOTSTRAP_ADMIN_MOBILE=7815972631
 BOOTSTRAP_ADMIN_NAME=Abha
 CORS_ORIGINS=http://35.222.32.191,https://maheshfoundation-medical.com,https://www.maheshfoundation-medical.com
 EOF
+else
+    echo "Existing .env found at /var/www/mahesh-meds-api/.env. Preserving custom values and ensuring production settings..."
+    sudo sed -i 's/^SMS_ENABLED=.*/SMS_ENABLED=true/' /var/www/mahesh-meds-api/.env
+    sudo sed -i 's/^COOKIE_SECURE=.*/COOKIE_SECURE=true/' /var/www/mahesh-meds-api/.env
+    if ! grep -q "SMS_PEID" /var/www/mahesh-meds-api/.env; then
+        sudo cat <<EOF | sudo tee -a /var/www/mahesh-meds-api/.env
+SMS_PEID=1201159102043751902
+SMS_API_KEY=a620ec90-84b6-4bc5-b28d-21303df51b49
+SMS_USERNAME=oz07-hostello
+SMS_SENDER=MHSFND
+SMS_BASE_URL=http://www.bulksmsapps.com/api/apismsv2.aspx
+SMS_TIMEOUT_SECONDS=10
+EOF
+    fi
+fi
+
+echo "=== Setting up Automated Daily Database Backups ==="
+sudo mkdir -p /var/backups/mahesh-meds
+sudo cat <<'EOF_BACKUP' | sudo tee /usr/local/bin/backup_mahesh_meds.sh
+#!/bin/bash
+BACKUP_DIR="/var/backups/mahesh-meds"
+TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
+BACKUP_FILE="${BACKUP_DIR}/db_backup_${TIMESTAMP}.sql.gz"
+mkdir -p "${BACKUP_DIR}"
+mysqldump -u mahesh_app -pMaheshAppPass2026! mahesh_meds | gzip > "${BACKUP_FILE}"
+find "${BACKUP_DIR}" -type f -name "db_backup_*.sql.gz" -mtime +30 -delete
+EOF_BACKUP
+
+sudo chmod +x /usr/local/bin/backup_mahesh_meds.sh
+(crontab -l 2>/dev/null | grep -v "/usr/local/bin/backup_mahesh_meds.sh"; echo "0 2 * * * /usr/local/bin/backup_mahesh_meds.sh >/dev/null 2>&1") | crontab -
+
 
 sudo chown -R www-data:www-data /var/www/mahesh-meds-api
 
@@ -81,6 +120,7 @@ After=network.target mariadb.service
 [Service]
 User=www-data
 WorkingDirectory=/var/www/mahesh-meds-api
+EnvironmentFile=/var/www/mahesh-meds-api/.env
 ExecStart=/var/www/mahesh-meds-api/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 2
 Restart=always
 

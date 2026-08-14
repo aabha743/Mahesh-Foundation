@@ -428,12 +428,17 @@ WHERE r.name = 'approver' AND p.action IN ('requests.approve', 'requests.reject'
 -- Seed SMS templates
 INSERT INTO sms_templates (id, event_name, template_text, template_id, is_active) VALUES
   (UUID(), 'otp_login', 'Your OTP for Registration or Login for Marwari Angels-an initiative of Mahesh Foundation is {otp}', '1207164430243674445', TRUE),
-  (UUID(), 'request_submitted_user', 'Mahesh Foundation: Your request is received. Token: {token_number}. We will update you after review.', NULL, TRUE),
+  (UUID(), 'request_submitted_user', 'Your request has been received by Mahesh Foundation’s Medical Equipment services team. Please keep Token: {token_number} for tracking and future communication. - MHSFND', NULL, TRUE),
+  (UUID(), 'MES_Service_Request', 'Your request has been received by Mahesh Foundation’s Medical Equipment services team. Please keep Token: {token_number} for tracking and future communication. - MHSFND', NULL, TRUE),
   (UUID(), 'request_submitted_approver', 'New device request received on Mahesh Foundation portal. Requestor: {requestor_name} . Device requested : {items}. Please review in the system. - MHSFND', '1207178298810693025', TRUE),
-  (UUID(), 'request_approved_user', 'Mahesh Foundation: Request {token_number} is approved. {pickup_guidance}', NULL, TRUE),
+  (UUID(), 'MES_Approver_Request', 'New device request received on Mahesh Foundation portal. Requestor: {requestor_name} . Device requested : {items}. Please review in the system. - MHSFND', '1207178298810693025', TRUE),
+  (UUID(), 'request_approved_user', 'Your request has been approved by Mahesh Foundation Medical Equipment services. Token: {token_number}. Please coordinate with {pickup_guidance} for next steps. - MHSFND', NULL, TRUE),
+  (UUID(), 'MES_User_Request_Approved', 'Your request has been approved by Mahesh Foundation Medical Equipment services. Token: {token_number}. Please coordinate with {pickup_guidance} for next steps. - MHSFND', NULL, TRUE),
   (UUID(), 'request_approved_center_manager', 'Mahesh Foundation: Request {token_number} for {requestor_name} is approved for {center_name}. Please prepare for fulfillment.', NULL, TRUE),
-  (UUID(), 'request_rejected_user', 'Mahesh Foundation: Request {token_number} was not approved. Please contact support for help.', NULL, TRUE),
+  (UUID(), 'request_rejected_user', 'Your request could not be approved by Mahesh Foundation Medical Equipment Services. For any concerns, please contact {contact_info} .', NULL, TRUE),
+  (UUID(), 'MES_Request_Rejected', 'Your request could not be approved by Mahesh Foundation Medical Equipment Services. For any concerns, please contact {contact_info} .', NULL, TRUE),
   (UUID(), 'device_issued_user', 'Devices have been issued by Mahesh Foundation Medical Equipment Services against Token: {token_number}. Items: {items}. Expected return date: {due_date}. - MHSFND', '1207178299880758060', TRUE),
+  (UUID(), 'MES_Device_Issued', 'Devices have been issued by Mahesh Foundation Medical Equipment Services against Token: {token_number}. Items: {items}. Expected return date: {due_date}. - MHSFND', '1207178299880758060', TRUE),
   (UUID(), 'return_reminder_7d', 'Reminder: Devices for Token: {token_number} are due on {due_date}. Please arrange return. - MHSFND', NULL, TRUE),
   (UUID(), 'return_reminder_3d', 'Reminder: Devices for Token: {token_number} are due on {due_date}. Please arrange return. - MHSFND', NULL, TRUE),
   (UUID(), 'return_reminder_1d', 'Reminder: Devices for Token: {token_number} are due on {due_date}. Please arrange return. - MHSFND', NULL, TRUE);

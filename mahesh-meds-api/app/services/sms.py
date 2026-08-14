@@ -15,7 +15,7 @@ SMS_USERNAME = os.getenv("SMS_USERNAME", "oz07-hostello")
 SMS_SENDER = os.getenv("SMS_SENDER", "MHSFND")
 SMS_BASE_URL = os.getenv("SMS_BASE_URL", "http://www.bulksmsapps.com/api/apismsv2.aspx")
 SMS_PEID = os.getenv("SMS_PEID", "")
-SMS_ENABLED = os.getenv("SMS_ENABLED", "false").lower() == "true"
+SMS_ENABLED = os.getenv("SMS_ENABLED", "true").lower() == "true"
 SMS_TIMEOUT_SECONDS = float(os.getenv("SMS_TIMEOUT_SECONDS", "10"))
 
 SMS_TEMPLATE_SEEDS: list[tuple[str, str, str | None]] = [
@@ -24,12 +24,61 @@ SMS_TEMPLATE_SEEDS: list[tuple[str, str, str | None]] = [
         "Your OTP for Registration or Login for Marwari Angels-an initiative of Mahesh Foundation is {otp}",
         "1207164430243674445",
     ),
-    ("request_submitted_user", "Mahesh Foundation: Your request is received. Token: {token_number}. We will update you after review.", None),
-    ("request_submitted_approver", "New device request received on Mahesh Foundation portal. Requestor: {requestor_name} . Device requested : {items}. Please review in the system. - MHSFND", "1207178298810693025"),
-    ("request_approved_user", "Mahesh Foundation: Request {token_number} is approved. {pickup_guidance}", None),
-    ("request_approved_center_manager", "Mahesh Foundation: Request {token_number} for {requestor_name} is approved for {center_name}. Please prepare for fulfillment.", None),
-    ("request_rejected_user", "Mahesh Foundation: Request {token_number} was not approved. Please contact support for help.", None),
-    ("device_issued_user", "Devices have been issued by Mahesh Foundation Medical Equipment Services against Token: {token_number}. Items: {items}. Expected return date: {due_date}. - MHSFND", "1207178299880758060"),
+    (
+        "request_submitted_user",
+        "Your request has been received by Mahesh Foundation’s Medical Equipment services team. Please keep Token: {token_number} for tracking and future communication. - MHSFND",
+        None,
+    ),
+    (
+        "MES_Service_Request",
+        "Your request has been received by Mahesh Foundation’s Medical Equipment services team. Please keep Token: {token_number} for tracking and future communication. - MHSFND",
+        None,
+    ),
+    (
+        "request_submitted_approver",
+        "New device request received on Mahesh Foundation portal. Requestor: {requestor_name} . Device requested : {items}. Please review in the system. - MHSFND",
+        "1207178298810693025",
+    ),
+    (
+        "MES_Approver_Request",
+        "New device request received on Mahesh Foundation portal. Requestor: {requestor_name} . Device requested : {items}. Please review in the system. - MHSFND",
+        "1207178298810693025",
+    ),
+    (
+        "request_approved_user",
+        "Your request has been approved by Mahesh Foundation Medical Equipment services. Token: {token_number}. Please coordinate with {pickup_guidance} for next steps. - MHSFND",
+        None,
+    ),
+    (
+        "MES_User_Request_Approved",
+        "Your request has been approved by Mahesh Foundation Medical Equipment services. Token: {token_number}. Please coordinate with {pickup_guidance} for next steps. - MHSFND",
+        None,
+    ),
+    (
+        "request_approved_center_manager",
+        "Mahesh Foundation: Request {token_number} for {requestor_name} is approved for {center_name}. Please prepare for fulfillment.",
+        None,
+    ),
+    (
+        "request_rejected_user",
+        "Your request could not be approved by Mahesh Foundation Medical Equipment Services. For any concerns, please contact {contact_info} .",
+        None,
+    ),
+    (
+        "MES_Request_Rejected",
+        "Your request could not be approved by Mahesh Foundation Medical Equipment Services. For any concerns, please contact {contact_info} .",
+        None,
+    ),
+    (
+        "device_issued_user",
+        "Devices have been issued by Mahesh Foundation Medical Equipment Services against Token: {token_number}. Items: {items}. Expected return date: {due_date}. - MHSFND",
+        "1207178299880758060",
+    ),
+    (
+        "MES_Device_Issued",
+        "Devices have been issued by Mahesh Foundation Medical Equipment Services against Token: {token_number}. Items: {items}. Expected return date: {due_date}. - MHSFND",
+        "1207178299880758060",
+    ),
     ("return_reminder_7d", "Reminder: Devices for Token: {token_number} are due on {due_date}. Please arrange return. - MHSFND", None),
     ("return_reminder_3d", "Reminder: Devices for Token: {token_number} are due on {due_date}. Please arrange return. - MHSFND", None),
     ("return_reminder_1d", "Reminder: Devices for Token: {token_number} are due on {due_date}. Please arrange return. - MHSFND", None),
@@ -225,7 +274,8 @@ def send_sms(
         )
         return False
 
-    if not SMS_ENABLED:
+    is_enabled = os.getenv("SMS_ENABLED", "true").lower() == "true"
+    if not is_enabled:
         log_sms_attempt(
             recipient_mobile=formatted_mobile,
             message=message,
