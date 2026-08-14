@@ -92,22 +92,31 @@ export function SerialNumberInput({
       typeof window !== "undefined" &&
       (window.location.protocol === "https:" || window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1");
 
-    const hasCameraSupport =
-      typeof navigator !== "undefined" &&
-      (!!navigator.mediaDevices?.getUserMedia ||
-        !!(navigator as any).getUserMedia ||
-        !!(navigator as any).webkitGetUserMedia ||
-        !!(navigator as any).mozGetUserMedia);
-
-    if (!isSecureOrigin || !hasCameraSupport) {
+    if (!isSecureOrigin) {
       setScanError(
-        "Camera access requires HTTPS. Please access the website via https://maheshfoundation-medical.com to use the camera scanner.",
+        "Camera access requires a secure connection (HTTPS). Please open https://maheshfoundation-medical.com in your mobile browser.",
       );
       return;
     }
 
     setScanning(true);
     try {
+      // Request camera permission upfront so device labels and stream permissions are granted
+      if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+          stream.getTracks().forEach((track) => track.stop());
+        } catch {
+          // If environment facingMode fails, try generic video constraint
+          try {
+            const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+            stream.getTracks().forEach((track) => track.stop());
+          } catch (permErr) {
+            console.warn("Camera permission prompt denied or failed:", permErr);
+          }
+        }
+      }
+
       const scanner = new Html5Qrcode(scannerElementId);
       scannerRef.current = scanner;
 
@@ -119,28 +128,31 @@ export function SerialNumberInput({
       };
 
       try {
-        // First try rear camera by facingMode
         await scanner.start({ facingMode: "environment" }, qrConfig, onScanSuccess, () => undefined);
       } catch {
-        // Fallback to camera enumeration
         const devices = await Html5Qrcode.getCameras();
         if (devices && devices.length > 0) {
           const rearCamera =
             devices.find(
-              (d) => d.label.toLowerCase().includes("back") || d.label.toLowerCase().includes("rear") || d.label.toLowerCase().includes("environment"),
+              (d) =>
+                d.label.toLowerCase().includes("back") ||
+                d.label.toLowerCase().includes("rear") ||
+                d.label.toLowerCase().includes("environment") ||
+                d.label.toLowerCase().includes("0"),
             ) || devices[0];
 
           await scanner.start(rearCamera.id, qrConfig, onScanSuccess, () => undefined);
         } else {
-          throw new Error("No camera found on device");
+          // Fallback to user facing camera or default
+          await scanner.start({ facingMode: "user" }, qrConfig, onScanSuccess, () => undefined);
         }
       }
     } catch (error) {
       const message = error instanceof Error ? error.message.toLowerCase() : "";
       if (message.includes("permission") || message.includes("notallowed") || message.includes("denied")) {
-        setScanError("Camera permission denied. Please allow camera permissions in browser settings.");
+        setScanError("Camera permission denied. Please tap the lock icon in your browser address bar and allow Camera access.");
       } else {
-        setScanError("Could not start camera scanner. Please enter the serial number manually or use HTTPS.");
+        setScanError("Could not start camera scanner. Ensure you are using HTTPS (https://maheshfoundation-medical.com) and camera permission is allowed.");
       }
       setScanning(false);
       await stopScanner();
