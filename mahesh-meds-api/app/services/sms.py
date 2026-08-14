@@ -27,12 +27,12 @@ SMS_TEMPLATE_SEEDS: list[tuple[str, str, str | None]] = [
     (
         "request_submitted_user",
         "Your request has been received by Mahesh Foundation’s Medical Equipment services team. Please keep Token: {token_number} for tracking and future communication. - MHSFND",
-        "1207178298116869900",
+        "1207178298116878850",
     ),
     (
         "MES_Service_Request",
         "Your request has been received by Mahesh Foundation’s Medical Equipment services team. Please keep Token: {token_number} for tracking and future communication. - MHSFND",
-        "1207178298116869900",
+        "1207178298116878850",
     ),
     (
         "request_submitted_approver",
@@ -47,12 +47,12 @@ SMS_TEMPLATE_SEEDS: list[tuple[str, str, str | None]] = [
     (
         "request_approved_user",
         "Your request has been approved by Mahesh Foundation Medical Equipment services. Token: {token_number}. Please coordinate with {pickup_guidance} for next steps. - MHSFND",
-        "1207178298611760100",
+        "1207178298611760659",
     ),
     (
         "MES_User_Request_Approved",
         "Your request has been approved by Mahesh Foundation Medical Equipment services. Token: {token_number}. Please coordinate with {pickup_guidance} for next steps. - MHSFND",
-        "1207178298611760100",
+        "1207178298611760659",
     ),
     (
         "request_approved_center_manager",
@@ -67,12 +67,12 @@ SMS_TEMPLATE_SEEDS: list[tuple[str, str, str | None]] = [
     (
         "request_rejected_user",
         "Your request could not be approved by Mahesh Foundation Medical Equipment Services. For any concerns, please contact {contact_info} .",
-        "1207178299249710100",
+        "1207178299249716221",
     ),
     (
         "MES_Request_Rejected",
         "Your request could not be approved by Mahesh Foundation Medical Equipment Services. For any concerns, please contact {contact_info} .",
-        "1207178299249710100",
+        "1207178299249716221",
     ),
     (
         "device_issued_user",
