@@ -29,23 +29,9 @@ export function SerialNumberInput({
   );
   const scannerRef = useRef<Html5Qrcode | null>(null);
   const successTimerRef = useRef<number | null>(null);
-  const [isMobileCapable, setIsMobileCapable] = useState(false);
   const [scanning, setScanning] = useState(false);
   const [scanError, setScanError] = useState<string>("");
   const [scanSuccess, setScanSuccess] = useState(false);
-
-  useEffect(() => {
-    const evaluateSupport = () => {
-      const isMobileScreen = typeof window !== "undefined" && window.innerWidth <= 768;
-      setIsMobileCapable(isMobileScreen);
-    };
-
-    evaluateSupport();
-    window.addEventListener("resize", evaluateSupport);
-    return () => {
-      window.removeEventListener("resize", evaluateSupport);
-    };
-  }, []);
 
   const stopScanner = async () => {
     if (!scannerRef.current) return;
@@ -72,7 +58,24 @@ export function SerialNumberInput({
   }, []);
 
   const handleScannedValue = (decodedText: string) => {
-    const nextValue = decodedText.trim();
+    let nextValue = decodedText.trim();
+    // If the QR code scanned is a URL, extract the serial number parameter or final path segment
+    if (nextValue.startsWith("http://") || nextValue.startsWith("https://")) {
+      try {
+        const urlObj = new URL(nextValue);
+        const serialParam = urlObj.searchParams.get("serial") || urlObj.searchParams.get("s");
+        if (serialParam) {
+          nextValue = serialParam.trim();
+        } else {
+          const parts = urlObj.pathname.split("/").filter(Boolean);
+          if (parts.length > 0) {
+            nextValue = parts[parts.length - 1].trim();
+          }
+        }
+      } catch {
+        // Fall back to raw string if parsing fails
+      }
+    }
     onChange(nextValue);
     onScanned?.(nextValue);
     setScanError("");
@@ -85,14 +88,21 @@ export function SerialNumberInput({
     if (disabled || scanning) return;
     setScanError("");
 
-    const hasCameraSupport = typeof navigator !== "undefined" &&
-      (!!navigator.mediaDevices?.getUserMedia ||
-       !!(navigator as any).getUserMedia ||
-       !!(navigator as any).webkitGetUserMedia ||
-       !!(navigator as any).mozGetUserMedia);
+    const isSecureOrigin =
+      typeof window !== "undefined" &&
+      (window.location.protocol === "https:" || window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1");
 
-    if (!hasCameraSupport) {
-      setScanError("Camera access requires a secure connection (HTTPS) or localhost. Please enter the serial number manually.");
+    const hasCameraSupport =
+      typeof navigator !== "undefined" &&
+      (!!navigator.mediaDevices?.getUserMedia ||
+        !!(navigator as any).getUserMedia ||
+        !!(navigator as any).webkitGetUserMedia ||
+        !!(navigator as any).mozGetUserMedia);
+
+    if (!isSecureOrigin || !hasCameraSupport) {
+      setScanError(
+        "Camera access requires HTTPS. Please access the website via https://maheshfoundation-medical.com to use the camera scanner.",
+      );
       return;
     }
 
@@ -100,22 +110,37 @@ export function SerialNumberInput({
     try {
       const scanner = new Html5Qrcode(scannerElementId);
       scannerRef.current = scanner;
-      await scanner.start(
-        { facingMode: "environment" },
-        { fps: 10, qrbox: { width: 250, height: 250 } },
-        async (decodedText) => {
-          handleScannedValue(decodedText);
-          setScanning(false);
-          await stopScanner();
-        },
-        () => undefined,
-      );
+
+      const qrConfig = { fps: 10, qrbox: { width: 250, height: 250 } };
+      const onScanSuccess = async (decodedText: string) => {
+        handleScannedValue(decodedText);
+        setScanning(false);
+        await stopScanner();
+      };
+
+      try {
+        // First try rear camera by facingMode
+        await scanner.start({ facingMode: "environment" }, qrConfig, onScanSuccess, () => undefined);
+      } catch {
+        // Fallback to camera enumeration
+        const devices = await Html5Qrcode.getCameras();
+        if (devices && devices.length > 0) {
+          const rearCamera =
+            devices.find(
+              (d) => d.label.toLowerCase().includes("back") || d.label.toLowerCase().includes("rear") || d.label.toLowerCase().includes("environment"),
+            ) || devices[0];
+
+          await scanner.start(rearCamera.id, qrConfig, onScanSuccess, () => undefined);
+        } else {
+          throw new Error("No camera found on device");
+        }
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message.toLowerCase() : "";
       if (message.includes("permission") || message.includes("notallowed") || message.includes("denied")) {
-        setScanError("Camera access denied. Please enter the serial number manually.");
+        setScanError("Camera permission denied. Please allow camera permissions in browser settings.");
       } else {
-        setScanError("Could not start camera scanner. Please enter the serial number manually.");
+        setScanError("Could not start camera scanner. Please enter the serial number manually or use HTTPS.");
       }
       setScanning(false);
       await stopScanner();
@@ -143,12 +168,10 @@ export function SerialNumberInput({
             <CheckCircle2 className="absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-success" />
           )}
         </div>
-        {isMobileCapable && (
-          <Button type="button" variant="outline" onClick={() => void startScanner()} disabled={disabled || scanning}>
-            <Camera className="mr-2 h-4 w-4" />
-            Scan QR
-          </Button>
-        )}
+        <Button type="button" variant="outline" onClick={() => void startScanner()} disabled={disabled || scanning}>
+          <Camera className="mr-2 h-4 w-4" />
+          Scan QR
+        </Button>
       </div>
 
       <p className="text-xs text-muted-foreground">
