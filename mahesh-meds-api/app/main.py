@@ -1577,18 +1577,39 @@ def list_assets(
     db: Session = Depends(get_db),
 ):
     """Returns physical assets with API-normalized status values (public endpoint).
+    Accounts for active SKUBlock reservations so available counts accurately reflect reserved stock.
     By default, only active assets are returned."""
     query = db.query(Asset)
     if not include_inactive:
         query = query.filter(Asset.is_active == True)
     assets = query.order_by(Asset.created_at.desc()).all()
-    return [
-        {
-            **AssetOut.model_validate(asset).model_dump(),
-            "status": asset_status_to_api(asset.status),
-        }
-        for asset in assets
-    ]
+
+    # Query active stock blocks
+    active_blocks = db.query(SKUBlock).filter(SKUBlock.status == "blocked").all()
+    blocked_counts: dict[tuple[str, str | None], int] = {}
+    for block in active_blocks:
+        key = (block.sku_id, block.center_id)
+        blocked_counts[key] = blocked_counts.get(key, 0) + 1
+
+    reserved_counts: dict[tuple[str, str | None], int] = {}
+    out_assets = []
+    for asset in assets:
+        api_status = asset_status_to_api(asset.status)
+        key = (asset.sku_id, asset.center_id)
+        if api_status == "available":
+            num_blocked = blocked_counts.get(key, 0)
+            already_reserved = reserved_counts.get(key, 0)
+            if already_reserved < num_blocked:
+                api_status = "blocked"
+                reserved_counts[key] = already_reserved + 1
+
+        out_assets.append(
+            {
+                **AssetOut.model_validate(asset).model_dump(),
+                "status": api_status,
+            }
+        )
+    return out_assets
 
 
 @app.post("/api/v1/assets", response_model=AssetOut)
