@@ -3,7 +3,7 @@ from datetime import timedelta
 
 import lease_test_support as support
 from app.jobs.reminders import release_expired_blocks
-from app.main import EXPIRED_REQUEST_DETAIL, PICKUP_WINDOW_HOURS
+from app.leasing import EXPIRED_REQUEST_DETAIL, PICKUP_WINDOW_HOURS
 from app.models import AuditLog
 from lease_test_support import utcnow
 

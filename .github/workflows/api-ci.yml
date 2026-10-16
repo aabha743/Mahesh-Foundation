@@ -6,16 +6,15 @@ on:
     paths:
       - "mahesh-meds-api/**"
       - ".github/workflows/api-ci.yml"
+  # Every master commit is checked (no path filter): the deploy only ships commits whose CI passed.
   push:
     branches: [master]
-    paths:
-      - "mahesh-meds-api/**"
-      - ".github/workflows/api-ci.yml"
 
-# A new push to the same PR or branch cancels the run it replaces (saves Actions minutes).
+# A new push to the same PR cancels the run it replaces (saves Actions minutes). Each master commit gets
+# its own group, so its run is never cancelled or dropped from the queue.
 concurrency:
-  group: api-ci-${{ github.ref }}
-  cancel-in-progress: true
+  group: api-ci-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -72,6 +71,12 @@ jobs:
           docker exec ${{ job.services.mariadb.id }} mariadb -uroot -pci-root mahesh_meds_test -e \
             "INSERT INTO centers (id, name, city) VALUES (UUID(), 'CI Fixture Center', 'Test');
              INSERT INTO skus (id, name, sku_code) VALUES (UUID(), 'CI Fixture Device', 'CI-FIXTURE-1');"
+
+      # schema.sql already contains every migration, so each one must be a no-op here (safe to re-run).
+      - name: Apply migrations to the fresh schema
+        run: |
+          python -m app.migrate apply
+          python -m app.migrate status
 
       - name: Run tests
         run: |

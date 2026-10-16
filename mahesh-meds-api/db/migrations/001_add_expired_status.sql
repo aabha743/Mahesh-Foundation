@@ -9,8 +9,8 @@
 -- ALGORITHM=INSTANT makes the statement fail instead of rebuilding the
 -- table if that ever stops being true.
 --
--- Apply after a backup:
---   sudo mariadb mahesh_meds < 2026-10-16_add_expired_status.sql
+-- Applied by hand in production on 2026-10-16, before migrations were tracked;
+-- see README.md in this folder for how migrations are applied now.
 -- ============================================
 
 ALTER TABLE lease_requests

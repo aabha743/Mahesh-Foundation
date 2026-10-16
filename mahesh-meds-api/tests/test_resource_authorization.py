@@ -3,7 +3,7 @@ from types import SimpleNamespace
 
 from fastapi import HTTPException
 
-from app.main import (
+from app.permissions import (
     enforce_center_resource_access,
     enforce_user_self_management_rules,
     get_effective_permissions,
