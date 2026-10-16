@@ -414,7 +414,7 @@ export default function TokenDetailDialog({ request, onClose, canDecide, submitt
 
                 <div>
                   <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2">Activity timeline</p>
-                  <p className="text-[11px] text-muted-foreground mb-3">
+                  <p className="text-xs text-muted-foreground mb-3">
                     From the audit ledger for this token. Routine &quot;token viewed&quot; events are hidden to reduce noise.
                   </p>
                   <ul className="space-y-3 border-l-2 border-border pl-4 ml-1">

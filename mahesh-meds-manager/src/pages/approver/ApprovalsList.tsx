@@ -14,6 +14,8 @@ import { type ApprovalRequest } from "@/data/approverMockData";
 import { formatLeaseStatus, formatPickupCenterLabel } from "@/lib/utils";
 import { apiFetch } from "@/lib/api";
 import { useAuth } from "@/hooks/useAuth";
+import { RequiredMark } from "@/components/RequiredMark";
+import { RejectRequestDialog } from "@/components/lease/RejectRequestDialog";
 
 function DaysWaitingBadge({ days }: { days: number }) {
   // Highlights aging pending requests so approvers can prioritize quickly.
@@ -34,7 +36,7 @@ export default function ApprovalsList() {
   const [reviewed, setReviewed] = useState<ApprovalRequest[]>([]);
   const [rejected, setRejected] = useState<ApprovalRequest[]>([]);
   const [rejectId, setRejectId] = useState<string | null>(null);
-  const [rejectReason, setRejectReason] = useState("");
+  const [rejecting, setRejecting] = useState(false);
 
   // Edit state
   const [editReq, setEditReq] = useState<ApprovalRequest | null>(null);
@@ -161,25 +163,27 @@ export default function ApprovalsList() {
     // Opens rejection modal for the selected request.
     e.stopPropagation();
     setRejectId(id);
-    setRejectReason("");
   };
 
   const handleRejectConfirm = async () => {
-    // Persists rejection reason and updates reviewed list.
+    // Rejects the request (no reason is asked for) and updates the reviewed list.
     const req = [...pending, ...expired].find((r) => r.id === rejectId);
     if (!req) return;
+    setRejecting(true);
     try {
       await apiFetch(`/api/v1/lease-requests/${req.id}`, {
         method: "PATCH",
-        body: JSON.stringify({ status: "rejected", rejection_reason: rejectReason }),
+        body: JSON.stringify({ status: "rejected" }),
       });
     } catch {
       toast.error(`Failed to reject ${req.token}`);
       return;
+    } finally {
+      setRejecting(false);
     }
     setPending((p) => p.filter((r) => r.id !== rejectId));
     setExpired((p) => p.filter((r) => r.id !== rejectId));
-    const updatedRequest = { ...req, status: "Rejected" as const, reviewedDate: new Date().toISOString().split("T")[0], daysWaiting: 0, rejectionReason: rejectReason };
+    const updatedRequest = { ...req, status: "Rejected" as const, reviewedDate: new Date().toISOString().split("T")[0], daysWaiting: 0 };
     setRejected((r) => [updatedRequest, ...r]);
     setReviewed((r) => [updatedRequest, ...r.filter((item) => item.id !== req.id)]);
     toast.error(`Request ${req.token} rejected`);
@@ -390,17 +394,12 @@ export default function ApprovalsList() {
       )}
 
       {/* Reject Dialog */}
-      <Dialog open={!!rejectId} onOpenChange={() => setRejectId(null)}>
-        <DialogContent>
-          <DialogHeader><DialogTitle>Reject Request</DialogTitle></DialogHeader>
-          <Textarea placeholder="Reason for rejection (min 20 characters)..." value={rejectReason} onChange={(e) => setRejectReason(e.target.value)} rows={4} />
-          <p className="text-xs text-muted-foreground">{rejectReason.length}/20 characters minimum</p>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setRejectId(null)}>Cancel</Button>
-            <Button variant="destructive" onClick={handleRejectConfirm} disabled={rejectReason.length < 20}>Submit Rejection</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <RejectRequestDialog
+        token={[...pending, ...expired].find((r) => r.id === rejectId)?.token ?? null}
+        submitting={rejecting}
+        onCancel={() => setRejectId(null)}
+        onConfirm={() => void handleRejectConfirm()}
+      />
 
       {/* Edit Dialog */}
       <Dialog open={!!editReq} onOpenChange={() => setEditReq(null)}>
@@ -423,7 +422,7 @@ export default function ApprovalsList() {
               ))}
             </div>
             <div className="space-y-1">
-              <Label className="text-sm font-medium">Reason for edit *</Label>
+              <Label className="text-sm font-medium">Reason for edit<RequiredMark /></Label>
               <Textarea
                 placeholder="Explain why the request was modified (required)..."
                 value={editComment}

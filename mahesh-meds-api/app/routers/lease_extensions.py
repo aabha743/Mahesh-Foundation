@@ -176,10 +176,9 @@ def review_lease_extension(
         extension.approver_comments = payload.approver_comments
         extension.rejection_reason = None
     elif review_status == "rejected":
-        if not payload.rejection_reason or len(payload.rejection_reason.strip()) < 10:
-            raise HTTPException(status_code=400, detail="Rejection reason must be at least 10 characters")
+        # No reason is required; one sent by an older screen is kept for staff only.
         extension.status = "rejected"
-        extension.rejection_reason = payload.rejection_reason.strip()
+        extension.rejection_reason = (payload.rejection_reason or "").strip() or None
         extension.approver_comments = payload.approver_comments
         extension.approved_due_date = None
     else:

@@ -74,7 +74,8 @@ class LeaseApiTestCase(unittest.TestCase):
         db.close()
 
     def setUp(self):
-        self.db.expire_all()
+        # Start each test without an open transaction (see sms_count).
+        self.db.rollback()
 
     @classmethod
     def make_asset(cls, sku: SKU | None = None, center: Center | None = None, status: str = "available") -> Asset:
@@ -145,13 +146,19 @@ class LeaseApiTestCase(unittest.TestCase):
 
     def sms_count(self, lease: LeaseRequest, event_name: str) -> int:
         self.db.rollback()
-        return self.db.query(NotificationLog).filter(
+        count = self.db.query(NotificationLog).filter(
             NotificationLog.reference_id == lease.id, NotificationLog.type == event_name
         ).count()
+        # End the read transaction: sending an SMS runs ALTER TABLE notifications_log (app/services/sms.py),
+        # which would wait for any open transaction that has read that table.
+        self.db.rollback()
+        return count
 
     def audit_count(self, lease: LeaseRequest, action: str) -> int:
         self.db.rollback()
-        return self.db.query(AuditLog).filter(AuditLog.entity_id == lease.id, AuditLog.action == action).count()
+        count = self.db.query(AuditLog).filter(AuditLog.entity_id == lease.id, AuditLog.action == action).count()
+        self.db.rollback()
+        return count
 
     def patch_as(self, user: User, lease: LeaseRequest, body: dict):
         client = TestClient(app, cookies={"access_token": create_access_token(user.id), "csrf_token": CSRF})

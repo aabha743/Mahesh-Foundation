@@ -21,7 +21,6 @@ type ExtensionHistoryEntry = {
   requestedAt: string;
   reviewedAt?: string | null;
   reason?: string | null;
-  rejectionReason?: string | null;
 };
 
 type StatusResult = {
@@ -40,7 +39,6 @@ type StatusResult = {
   items: { sku: string; qty: number; serial?: string; dueDate?: string | null }[];
   preferredCenter: string;
   submittedDate: string;
-  rejectionReason?: string;
   notes?: string;
 };
 
@@ -161,7 +159,6 @@ function mapLeaseLookupToStatusResult(
       requestedAt: entry.requested_at,
       reviewedAt: entry.reviewed_at,
       reason: entry.reason,
-      rejectionReason: entry.rejection_reason,
     })),
     items: (data.items ?? []).length
       ? (data.items ?? []).map((item) => ({
@@ -172,7 +169,6 @@ function mapLeaseLookupToStatusResult(
       : (data.skus ?? []).map((sku) => ({ sku, qty: 1 })),
     preferredCenter: data.preferred_center_id ? centerMap[data.preferred_center_id] ?? "Unassigned" : "Unassigned",
     submittedDate: data.created_at.slice(0, 10),
-    rejectionReason: data.rejection_reason ?? undefined,
     notes: data.notes ?? undefined,
   };
 }
@@ -341,9 +337,6 @@ export default function RequestStatus() {
                     )}
                   </div>
                 )}
-                {result.status === "Rejected" && result.rejectionReason && (
-                  <div className="mt-3 bg-card p-3 rounded text-sm text-left text-destructive">{result.rejectionReason}</div>
-                )}
                 {result.status === "Rejected" && (
                   <p className="text-sm text-muted-foreground mt-2">
                     Emergency contact: <span className="font-medium text-foreground">{emergencyContactText()}</span>
@@ -429,7 +422,6 @@ export default function RequestStatus() {
                           </p>
                         )}
                         {entry.reason && <p className="text-sm text-muted-foreground">Reason: {entry.reason}</p>}
-                        {entry.rejectionReason && <p className="text-sm text-destructive">Rejection reason: {entry.rejectionReason}</p>}
                       </div>
                     ))}
                   </div>

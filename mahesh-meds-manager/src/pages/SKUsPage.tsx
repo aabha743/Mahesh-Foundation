@@ -11,6 +11,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { toast } from "sonner";
 import { apiFetch } from "@/lib/api";
 import { useAuth } from "@/hooks/useAuth";
+import { RequiredMark } from "@/components/RequiredMark";
 
 type SKUCategory = "Mobility Aid" | "Respiratory" | "Monitoring" | "Rehabilitation" | "Other";
 type SkuApi = {
@@ -175,15 +176,15 @@ export default function SKUsPage() {
               <div className="grid grid-cols-3 gap-2 text-center border-t border-border pt-3">
                 <div>
                   <p className="text-lg font-bold text-foreground">{sku.total}</p>
-                  <p className="text-[10px] text-muted-foreground">Total</p>
+                  <p className="text-xs text-muted-foreground">Total</p>
                 </div>
                 <div>
                   <p className="text-lg font-bold text-success">{sku.available}</p>
-                  <p className="text-[10px] text-muted-foreground">Available</p>
+                  <p className="text-xs text-muted-foreground">Available</p>
                 </div>
                 <div>
                   <p className="text-lg font-bold text-warning">{sku.leased}</p>
-                  <p className="text-[10px] text-muted-foreground">Leased</p>
+                  <p className="text-xs text-muted-foreground">Leased</p>
                 </div>
               </div>
               <div className="mt-3 pt-3 border-t border-border text-xs text-muted-foreground">
@@ -202,11 +203,11 @@ export default function SKUsPage() {
           </DialogHeader>
           <div className="space-y-4 mt-2">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="space-y-2"><Label>SKU Code *</Label><Input placeholder="e.g. SKU-XX-YYY" value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value })} /></div>
-              <div className="space-y-2"><Label>Device Name *</Label><Input placeholder="e.g. Pulse Oximeter" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></div>
+              <div className="space-y-2"><Label>SKU Code<RequiredMark /></Label><Input placeholder="e.g. SKU-XX-YYY" value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value })} /></div>
+              <div className="space-y-2"><Label>Device Name<RequiredMark /></Label><Input placeholder="e.g. Pulse Oximeter" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></div>
             </div>
             <div className="space-y-2">
-              <Label>Category *</Label>
+              <Label>Category<RequiredMark /></Label>
               <Select value={form.category} onValueChange={(v) => setForm({ ...form, category: v as SKUCategory })}>
                 <SelectTrigger><SelectValue placeholder="Select category" /></SelectTrigger>
                 <SelectContent>{skuCategories.map((c) => <SelectItem key={c} value={c}>{c}</SelectItem>)}</SelectContent>

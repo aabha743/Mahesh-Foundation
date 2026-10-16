@@ -13,6 +13,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { createLeaseExtension, getLeaseRequestByToken, type LeaseRequestTokenLookup } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
+import { RequiredMark } from "@/components/RequiredMark";
 
 export default function LeaseExtensionForm() {
   const navigate = useNavigate();
@@ -178,22 +179,22 @@ export default function LeaseExtensionForm() {
             <form className="space-y-4" onSubmit={(e) => void handleSubmit(e)}>
               <div className="grid gap-4 sm:grid-cols-2">
                 <div className="space-y-2">
-                  <Label htmlFor="requestor-name">Requestor name</Label>
+                  <Label htmlFor="requestor-name">Requestor name<RequiredMark /></Label>
                   <Input id="requestor-name" value={requestorName} onChange={(e) => setRequestorName(e.target.value)} />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="mobile">Mobile</Label>
+                  <Label htmlFor="mobile">Mobile<RequiredMark /></Label>
                   <Input id="mobile" value={mobile} onChange={(e) => setMobile(e.target.value.replace(/\D/g, "").slice(0, 10))} />
                 </div>
               </div>
 
               <div className="grid gap-4 sm:grid-cols-2">
                 <div className="space-y-2">
-                  <Label htmlFor="aadhar">Aadhaar</Label>
+                  <Label htmlFor="aadhar">Aadhaar<RequiredMark /></Label>
                   <Input id="aadhar" value={aadharNumber} onChange={(e) => setAadharNumber(e.target.value.replace(/\D/g, "").slice(0, 12))} />
                 </div>
                 <div className="space-y-2">
-                  <Label>Requested return date</Label>
+                  <Label>Requested return date<RequiredMark /></Label>
                   <Popover>
                     <PopoverTrigger asChild>
                       <Button
@@ -227,7 +228,7 @@ export default function LeaseExtensionForm() {
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="reason">Reason</Label>
+                <Label htmlFor="reason">Reason<RequiredMark /></Label>
                 <Textarea
                   id="reason"
                   rows={4}

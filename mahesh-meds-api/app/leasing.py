@@ -95,6 +95,9 @@ def compute_due_date(expected_duration: str | None, issued_at: datetime | None =
     return issue_date + timedelta(days=days)
 
 
+# Expected durations a request can ask for (the public form offers exactly these).
+REQUEST_DURATIONS = ("1 Week", "2 Weeks", "3 Weeks", "4 Weeks")
+
 EXTENSION_DURATION_DAYS = {
     "3 days": 3,
     "1 week": 7,
@@ -493,8 +496,11 @@ def fulfillment_center_names(fulfillment_centers: list[dict]) -> str:
     return f"{', '.join(names[:-1])}, and {names[-1]}"
 
 
-def build_public_lease_lookup_result(db: Session, req: LeaseRequest) -> dict:
-    """Serialize a lease request with public tracking metadata and line items."""
+def build_public_lease_lookup_result(db: Session, req: LeaseRequest, *, include_rejection_reasons: bool = False) -> dict:
+    """Serialize a lease request with public tracking metadata and line items.
+
+    Rejection reasons (of the request and of its extension requests) are left out unless the caller is staff.
+    """
     sku_rows = db.execute(
         select(
             LeaseItem.lease_request_id,
@@ -535,6 +541,11 @@ def build_public_lease_lookup_result(db: Session, req: LeaseRequest) -> dict:
         "latest_extension": latest_extension_summary(db, req.id),
         "extension_history": extension_history_summary(db, req.id),
     }
+
+    if not include_rejection_reasons:
+        res["rejection_reason"] = None
+        for entry in res["extension_history"]:
+            entry["rejection_reason"] = None
 
     # Mask sensitive customer PII fields
     if res.get("mobile"):

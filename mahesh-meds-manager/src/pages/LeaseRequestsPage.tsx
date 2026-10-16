@@ -6,9 +6,8 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
-import { Textarea } from "@/components/ui/textarea";
 import TokenDetailDialog from "@/components/lease/TokenDetailDialog";
+import { RejectRequestDialog } from "@/components/lease/RejectRequestDialog";
 import { awaitsDecision, formatFulfillmentCenterLabel, leaseStatusColors } from "@/lib/leaseRequestDisplay";
 import { type LeaseRequestView as LeaseRequest, type LeaseStatus } from "@/lib/uiTypes";
 import { formatLeaseStatus } from "@/lib/utils";
@@ -25,7 +24,6 @@ export default function LeaseRequestsPage() {
   const [leaseRequests, setLeaseRequests] = useState<LeaseRequest[]>([]);
   const [submittingAction, setSubmittingAction] = useState(false);
   const [rejectRequest, setRejectRequest] = useState<LeaseRequest | null>(null);
-  const [rejectReason, setRejectReason] = useState("");
 
 
   const filtered = useMemo(() => {
@@ -127,30 +125,21 @@ export default function LeaseRequestsPage() {
 
   const handleRejectConfirm = useCallback(async () => {
     if (!rejectRequest) return;
-    if (rejectReason.trim().length < 20) {
-      toast.error("Please enter at least 20 characters for the rejection reason");
-      return;
-    }
-
     setSubmittingAction(true);
     try {
       await apiFetch(`/api/v1/lease-requests/${rejectRequest.id}`, {
         method: "PATCH",
-        body: JSON.stringify({
-          status: "rejected",
-          rejection_reason: rejectReason.trim(),
-        }),
+        body: JSON.stringify({ status: "rejected" }),
       });
       toast.success(`Rejected ${rejectRequest.token}`);
       await refreshAfterMutation(rejectRequest);
       setRejectRequest(null);
-      setRejectReason("");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Failed to reject request");
     } finally {
       setSubmittingAction(false);
     }
-  }, [refreshAfterMutation, rejectReason, rejectRequest]);
+  }, [refreshAfterMutation, rejectRequest]);
 
   return (
     <div className="space-y-4">
@@ -230,10 +219,7 @@ export default function LeaseRequestsPage() {
                             variant="ghost"
                             size="icon"
                             className="h-8 w-8 text-destructive hover:text-destructive"
-                            onClick={() => {
-                              setRejectRequest(req);
-                              setRejectReason("");
-                            }}
+                            onClick={() => setRejectRequest(req)}
                             disabled={submittingAction}
                             title={req.status === "Expired" ? "Reject expired request" : "Reject pending request"}
                           >
@@ -292,10 +278,7 @@ export default function LeaseRequestsPage() {
                         size="sm"
                         variant="outline"
                         className="w-full justify-start border-destructive text-destructive hover:bg-destructive/10"
-                        onClick={() => {
-                          setRejectRequest(req);
-                          setRejectReason("");
-                        }}
+                        onClick={() => setRejectRequest(req)}
                         disabled={submittingAction}
                       >
                         <XCircle className="h-4 w-4 mr-2" />
@@ -323,59 +306,15 @@ export default function LeaseRequestsPage() {
         canDecide={canUseAdminFallback}
         submitting={submittingAction}
         onApprove={(request) => void handleApprove(request)}
-        onReject={(request) => {
-          setRejectRequest(request);
-          setRejectReason("");
-        }}
+        onReject={(request) => setRejectRequest(request)}
       />
 
-      <Dialog
-        open={!!rejectRequest}
-        onOpenChange={(open) => {
-          if (!open && !submittingAction) {
-            setRejectRequest(null);
-            setRejectReason("");
-          }
-        }}
-      >
-        <DialogContent className="w-full max-w-md mx-4 md:mx-auto sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>Reject Pending Request</DialogTitle>
-            <DialogDescription>
-              {rejectRequest ? `Provide a reason for rejecting token ${rejectRequest.token}.` : "Provide a rejection reason."}
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-3">
-            <Textarea
-              placeholder="Reason for rejection (minimum 20 characters)"
-              value={rejectReason}
-              onChange={(e) => setRejectReason(e.target.value)}
-              rows={4}
-              disabled={submittingAction}
-            />
-            <p className="text-xs text-muted-foreground">{rejectReason.trim().length}/20 characters minimum</p>
-            <div className="flex justify-end gap-2">
-              <Button
-                variant="outline"
-                onClick={() => {
-                  setRejectRequest(null);
-                  setRejectReason("");
-                }}
-                disabled={submittingAction}
-              >
-                Cancel
-              </Button>
-              <Button
-                variant="destructive"
-                onClick={() => void handleRejectConfirm()}
-                disabled={submittingAction || rejectReason.trim().length < 20}
-              >
-                {submittingAction ? "Rejecting..." : "Submit Rejection"}
-              </Button>
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
+      <RejectRequestDialog
+        token={rejectRequest?.token ?? null}
+        submitting={submittingAction}
+        onCancel={() => setRejectRequest(null)}
+        onConfirm={() => void handleRejectConfirm()}
+      />
     </div>
   );
 }

@@ -1,6 +1,6 @@
 import { useMemo, useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { CheckCircle, Plus, Minus } from "lucide-react";
+import { CheckCircle, Plus, Minus, Search, X } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -11,8 +11,9 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Textarea } from "@/components/ui/textarea";
 import { PublicHeader, PublicFooter } from "@/components/PublicHeader";
 import { apiFetch } from "@/lib/api";
+import { RequiredMark } from "@/components/RequiredMark";
 
-const durations = ["1 Week", "2 Weeks"];
+const durations = ["1 Week", "2 Weeks", "3 Weeks", "4 Weeks"];
 
 // Used for the initial form and for "Submit Another Request", so a reset clears every field.
 const EMPTY_FORM = {
@@ -68,6 +69,11 @@ export default function LeaseRequestForm() {
   const [filterArea, setFilterArea] = useState("all");
   const [filterSku, setFilterSku] = useState("all");
   const [searchTerm, setSearchTerm] = useState("");
+  const [searchOpen, setSearchOpen] = useState(false);
+  const closeSearch = () => {
+    setSearchTerm("");
+    setSearchOpen(false);
+  };
 
   const centerNameToId = useMemo(
     () => Object.fromEntries(centers.map((center) => [center.name, center.id])),
@@ -163,7 +169,6 @@ export default function LeaseRequestForm() {
     if (!/^\d{12}$/.test(formData.aadhar.replace(/\s/g, ""))) e.aadhar = "Enter valid 12-digit Aadhaar";
     if (!formData.patientName.trim()) e.patientName = "Patient name is required";
     if (!formData.deliveryAddress.trim()) e.deliveryAddress = "Delivery address is required";
-    if (!formData.deliveryLandmark.trim()) e.deliveryLandmark = "Closest landmark is required";
     if (!formData.referredBy.trim()) e.referredBy = "Referral source is required";
     if (!formData.preferredCenterId) e.preferredCenterId = "Preferred pickup center is required";
     if (!formData.duration) e.duration = "Select duration";
@@ -193,7 +198,7 @@ export default function LeaseRequestForm() {
           aadhar_number: formData.aadhar.replace(/\s/g, ""),
           patient_name: formData.patientName.trim(),
           delivery_address: formData.deliveryAddress.trim(),
-          delivery_landmark: formData.deliveryLandmark.trim(),
+          delivery_landmark: formData.deliveryLandmark.trim() || null,
           reference_name: formData.referredBy.trim(),
           preferred_center_id: formData.preferredCenterId,
           expected_duration: formData.duration,
@@ -253,8 +258,8 @@ export default function LeaseRequestForm() {
 
         {!showForm && (
           <>
-            <div className="grid grid-cols-1 gap-3 md:grid-cols-3 md:items-end">
-              <div className="space-y-1.5">
+            <div className="grid grid-cols-[1fr_auto] gap-3 md:grid-cols-[1fr_1fr_auto] md:items-end">
+              <div className="col-span-2 space-y-1.5 md:col-span-1">
                 <Label className="text-xs font-medium text-muted-foreground">Filter by area</Label>
                 <Select value={filterArea} onValueChange={setFilterArea}>
                   <SelectTrigger className="min-h-11"><SelectValue placeholder="Filter by Area" /></SelectTrigger>
@@ -278,16 +283,43 @@ export default function LeaseRequestForm() {
                   </SelectContent>
                 </Select>
               </div>
-              <div className="space-y-1.5">
-                <Label className="text-xs font-medium text-muted-foreground">Search</Label>
+              <Button
+                type="button"
+                variant={searchOpen || searchTerm ? "default" : "outline"}
+                size="icon"
+                className="h-11 w-11 shrink-0 self-end"
+                aria-label="Search devices"
+                aria-expanded={searchOpen}
+                onClick={() => (searchOpen ? closeSearch() : setSearchOpen(true))}
+              >
+                <Search className="h-5 w-5" />
+              </Button>
+            </div>
+
+            {searchOpen && (
+              <div className="relative">
+                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                 <Input
+                  autoFocus
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
+                  onKeyDown={(e) => e.key === "Escape" && closeSearch()}
                   placeholder="Search device or category..."
-                  className="min-h-11"
+                  aria-label="Search device or category"
+                  className="min-h-11 pl-9 pr-11"
                 />
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="absolute right-1 top-1/2 h-9 w-9 -translate-y-1/2"
+                  aria-label="Clear and close search"
+                  onClick={closeSearch}
+                >
+                  <X className="h-4 w-4" />
+                </Button>
               </div>
-            </div>
+            )}
 
             <Card>
               <CardContent className="p-0">
@@ -462,7 +494,7 @@ export default function LeaseRequestForm() {
 
                 <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
                   <div className="space-y-1.5">
-                    <Label htmlFor="requestor-name">Full Name *</Label>
+                    <Label htmlFor="requestor-name">Full Name<RequiredMark /></Label>
                     <Input
                       id="requestor-name"
                       className="min-h-11"
@@ -474,7 +506,7 @@ export default function LeaseRequestForm() {
                   </div>
 
                   <div className="space-y-1.5">
-                    <Label htmlFor="requestor-mobile">Mobile Number *</Label>
+                    <Label htmlFor="requestor-mobile">Mobile Number<RequiredMark /></Label>
                     <div className="flex items-stretch gap-2">
                       <span className="inline-flex min-h-11 items-center rounded-md border border-input bg-muted px-3 text-sm text-muted-foreground">+91</span>
                       <Input
@@ -489,7 +521,7 @@ export default function LeaseRequestForm() {
                   </div>
 
                   <div className="space-y-1.5">
-                    <Label htmlFor="requestor-aadhar">Aadhar Number *</Label>
+                    <Label htmlFor="requestor-aadhar">Aadhar Number<RequiredMark /></Label>
                     <Input
                       id="requestor-aadhar"
                       className="min-h-11"
@@ -502,7 +534,7 @@ export default function LeaseRequestForm() {
                   </div>
 
                   <div className="space-y-1.5">
-                    <Label htmlFor="requestor-referrer">Referred By *</Label>
+                    <Label htmlFor="requestor-referrer">Referred By<RequiredMark /></Label>
                     <Input
                       id="requestor-referrer"
                       className="min-h-11"
@@ -523,7 +555,7 @@ export default function LeaseRequestForm() {
 
                 <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
                   <div className="space-y-1.5 md:col-span-2">
-                    <Label htmlFor="patient-name">Patient's Name *</Label>
+                    <Label htmlFor="patient-name">Patient's Name<RequiredMark /></Label>
                     <Input
                       id="patient-name"
                       className="min-h-11"
@@ -535,7 +567,7 @@ export default function LeaseRequestForm() {
                   </div>
 
                   <div className="space-y-1.5 md:col-span-2">
-                    <Label htmlFor="delivery-address">Delivery Address *</Label>
+                    <Label htmlFor="delivery-address">Delivery Address<RequiredMark /></Label>
                     <Textarea
                       id="delivery-address"
                       className="min-h-20 resize-y"
@@ -547,7 +579,7 @@ export default function LeaseRequestForm() {
                   </div>
 
                   <div className="space-y-1.5 md:col-span-2">
-                    <Label htmlFor="delivery-landmark">Closest Landmark *</Label>
+                    <Label htmlFor="delivery-landmark">Closest Landmark <span className="font-normal text-muted-foreground">(optional)</span></Label>
                     <Input
                       id="delivery-landmark"
                       className="min-h-11"
@@ -555,7 +587,6 @@ export default function LeaseRequestForm() {
                       onChange={(e) => setFormData((p) => ({ ...p, deliveryLandmark: e.target.value }))}
                       placeholder="Closest landmark to the delivery address"
                     />
-                    {errors.deliveryLandmark && <p className="text-xs text-destructive">{errors.deliveryLandmark}</p>}
                   </div>
                 </div>
               </div>
@@ -568,7 +599,7 @@ export default function LeaseRequestForm() {
 
                 <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
                   <div className="space-y-1.5">
-                    <Label htmlFor="preferred-center">Preferred Pickup Center *</Label>
+                    <Label htmlFor="preferred-center">Preferred Pickup Center<RequiredMark /></Label>
                     <Select value={formData.preferredCenterId} onValueChange={(v) => setFormData((p) => ({ ...p, preferredCenterId: v }))}>
                       <SelectTrigger id="preferred-center" className="min-h-11">
                         <SelectValue placeholder="Select pickup center" />
@@ -583,7 +614,7 @@ export default function LeaseRequestForm() {
                   </div>
 
                   <div className="space-y-1.5">
-                    <Label htmlFor="expected-duration">Expected Duration *</Label>
+                    <Label htmlFor="expected-duration">Expected Duration<RequiredMark /></Label>
                     <Select value={formData.duration} onValueChange={(v) => setFormData((p) => ({ ...p, duration: v }))}>
                       <SelectTrigger id="expected-duration" className="min-h-11">
                         <SelectValue placeholder="Select duration" />

@@ -14,6 +14,8 @@ import { toast } from "sonner";
 import { type ApprovalRequest } from "@/data/approverMockData";
 import { apiFetch } from "@/lib/api";
 import { formatLeaseStatus, formatPickupCenterLabel } from "@/lib/utils";
+import { RequiredMark } from "@/components/RequiredMark";
+import { RejectRequestDialog } from "@/components/lease/RejectRequestDialog";
 
 export default function ApprovalDetail() {
   const { id } = useParams();
@@ -22,7 +24,7 @@ export default function ApprovalDetail() {
   const [loading, setLoading] = useState(true);
   const [showApproveConfirm, setShowApproveConfirm] = useState(false);
   const [showRejectModal, setShowRejectModal] = useState(false);
-  const [rejectReason, setRejectReason] = useState("");
+  const [rejecting, setRejecting] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [editItems, setEditItems] = useState<{ sku: string; qty: number }[]>([]);
   const [editComment, setEditComment] = useState("");
@@ -152,15 +154,18 @@ export default function ApprovalDetail() {
   };
 
   const handleReject = async () => {
-    // Rejects this request with the entered reason.
+    // Rejects this request (no reason is asked for).
+    setRejecting(true);
     try {
       await apiFetch(`/api/v1/lease-requests/${request.id}`, {
         method: "PATCH",
-        body: JSON.stringify({ status: "rejected", rejection_reason: rejectReason }),
+        body: JSON.stringify({ status: "rejected" }),
       });
     } catch {
       toast.error(`Failed to reject ${request.token}`);
       return;
+    } finally {
+      setRejecting(false);
     }
     toast.error(`Request ${request.token} rejected`);
     navigate("/approvals");
@@ -332,17 +337,12 @@ export default function ApprovalDetail() {
         </AlertDialogContent>
       </AlertDialog>
 
-      <Dialog open={showRejectModal} onOpenChange={setShowRejectModal}>
-        <DialogContent>
-          <DialogHeader><DialogTitle>Reason for Rejection</DialogTitle></DialogHeader>
-          <Textarea placeholder="Enter rejection reason (min 20 characters)..." value={rejectReason} onChange={(e) => setRejectReason(e.target.value)} rows={4} />
-          <p className="text-xs text-muted-foreground">{rejectReason.length}/20 characters minimum</p>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setShowRejectModal(false)}>Cancel</Button>
-            <Button variant="destructive" disabled={rejectReason.length < 20} onClick={handleReject}>Submit Rejection</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <RejectRequestDialog
+        token={showRejectModal ? request.token : null}
+        submitting={rejecting}
+        onCancel={() => setShowRejectModal(false)}
+        onConfirm={() => void handleReject()}
+      />
 
       {/* Edit Dialog */}
       <Dialog open={showEditModal} onOpenChange={setShowEditModal}>
@@ -365,7 +365,7 @@ export default function ApprovalDetail() {
               ))}
             </div>
             <div className="space-y-1">
-              <Label className="text-sm font-medium">Reason for edit *</Label>
+              <Label className="text-sm font-medium">Reason for edit<RequiredMark /></Label>
               <Textarea
                 placeholder="Explain why the request was modified (required)..."
                 value={editComment}
