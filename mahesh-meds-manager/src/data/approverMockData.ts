@@ -12,7 +12,7 @@ export interface ApprovalRequest {
   referredBy: string;
   submittedDate: string;
   daysWaiting: number;
-  status: "Pending" | "Approved" | "Rejected" | "Active" | "Closed";
+  status: "Pending" | "Approved" | "Rejected" | "Active" | "Closed" | "Expired";
   reviewedDate?: string;
   rejectionReason?: string;
   notes?: string;
@@ -46,7 +46,7 @@ export function maskMobileApprover(mobile: string): string {
 // Status tracking mock data for public pages
 export interface StatusResult {
   token: string;
-  status: "Pending" | "Approved" | "Rejected" | "Active" | "Closed";
+  status: "Pending" | "Approved" | "Rejected" | "Active" | "Closed" | "Expired";
   requestorName: string;
   mobile: string;
   items: { sku: string; qty: number; serial?: string }[];

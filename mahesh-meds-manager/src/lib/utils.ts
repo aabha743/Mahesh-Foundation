@@ -16,6 +16,7 @@ export function formatLeaseStatus(status: string): string {
     "approved": "Approved",
     "pending": "Pending",
     "rejected": "Rejected",
+    "expired": "Expired",
   };
   
   return statusMap[status] || status;

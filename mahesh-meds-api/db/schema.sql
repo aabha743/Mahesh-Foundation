@@ -190,7 +190,8 @@ CREATE TABLE lease_requests (
     'rejected',
     'issued',
     'returned',
-    'partially_returned'
+    'partially_returned',
+    'expired'
   ) NOT NULL DEFAULT 'pending',
   approval_comments TEXT,
   rejection_reason TEXT,

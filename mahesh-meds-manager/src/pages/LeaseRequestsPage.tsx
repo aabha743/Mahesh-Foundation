@@ -21,9 +21,15 @@ const statusColors: Record<LeaseStatus, string> = {
   Rejected: "bg-destructive/10 text-destructive border-destructive/20",
   Active: "bg-primary/10 text-primary border-primary/20",
   Closed: "bg-muted text-muted-foreground border-border",
+  Expired: "bg-warning/10 text-warning border-warning/20",
 };
 
-const tabs = ["All", "Pending", "Approved", "Active", "Closed"] as const;
+const tabs = ["All", "Pending", "Approved", "Expired", "Active", "Closed"] as const;
+
+/** Requests an approver still has to act on: new ones, and expired ones that can be re-approved. */
+function awaitsDecision(status: string): boolean {
+  return status === "Pending" || status === "Expired";
+}
 
 type TokenLeaseDetail = {
   id: string;
@@ -122,10 +128,21 @@ function daysBetween(start: Date, end: Date): number {
   return Math.max(0, Math.ceil(ms / (1000 * 60 * 60 * 24)));
 }
 
+/** Automated entries record actor_role as "system: <job>" or "ops: <what was done>". */
+function automatedActor(log: AuditLogRow): string | null {
+  const role = typeof log.new_value?.actor_role === "string" ? log.new_value.actor_role.trim() : "";
+  const match = /^(system|ops):\s*(.+)$/i.exec(role);
+  if (!match) return null;
+  const kind = match[1].toLowerCase() === "ops" ? "Ops" : "System";
+  return `${kind} (${match[2]})`;
+}
+
 /** Resolves audit actor for display (handles legacy `actor_mobile: "public"` from older API logs). */
 function formatActorFromLog(log: AuditLogRow, staff: StaffLookup): string {
   const named = log.user_name?.trim();
   if (named) return named;
+  const automated = automatedActor(log);
+  if (automated) return automated;
   const uid = log.user_id;
   if (uid && staff.nameByUserId[uid]) return staff.nameByUserId[uid];
   const raw = log.new_value?.actor_mobile;
@@ -148,6 +165,7 @@ function formatActorRoleSuffix(log: AuditLogRow): string {
   const r = log.new_value?.actor_role;
   if (typeof r !== "string" || !r.trim()) return "";
   if (r.trim().toLowerCase() === "public") return "";
+  if (automatedActor(log)) return "";
   return ` · ${r.replace(/_/g, " ")}`;
 }
 
@@ -156,6 +174,7 @@ function humanizeAuditAction(action: string): string {
     request_created: "Request submitted (token issued)",
     approve_request: "Approved",
     reject_request: "Rejected",
+    request_expired: "Expired (pickup window passed)",
     request_updated: "Request / fulfillment updated",
     token_viewed: "Token looked up",
   };
@@ -545,7 +564,7 @@ export default function LeaseRequestsPage() {
                   <TableCell className="hidden sm:table-cell text-muted-foreground">{req.submittedDate}</TableCell>
                   <TableCell className="text-right">
                     <div className="flex items-center justify-end gap-1">
-                      {canUseAdminFallback && req.status === "Pending" && (
+                      {canUseAdminFallback && awaitsDecision(req.status) && (
                         <>
                           <Button
                             variant="ghost"
@@ -553,7 +572,7 @@ export default function LeaseRequestsPage() {
                             className="h-8 w-8 text-success hover:text-success"
                             onClick={() => void handleApprove(req)}
                             disabled={submittingAction}
-                            title="Approve pending request"
+                            title={req.status === "Expired" ? "Re-approve expired request" : "Approve pending request"}
                           >
                             <CheckCircle className="h-3.5 w-3.5" />
                           </Button>
@@ -566,7 +585,7 @@ export default function LeaseRequestsPage() {
                               setRejectReason("");
                             }}
                             disabled={submittingAction}
-                            title="Reject pending request"
+                            title={req.status === "Expired" ? "Reject expired request" : "Reject pending request"}
                           >
                             <XCircle className="h-3.5 w-3.5" />
                           </Button>
@@ -613,11 +632,11 @@ export default function LeaseRequestsPage() {
                     : <span className="text-xs text-muted-foreground">No items</span>}
                 </div>
                 <div className="flex flex-col gap-2">
-                  {canUseAdminFallback && req.status === "Pending" && (
+                  {canUseAdminFallback && awaitsDecision(req.status) && (
                     <>
                       <Button size="sm" className="w-full justify-start bg-success hover:bg-success/90 text-success-foreground" onClick={() => void handleApprove(req)} disabled={submittingAction}>
                         <CheckCircle className="h-4 w-4 mr-2" />
-                        Approve
+                        {req.status === "Expired" ? "Re-approve" : "Approve"}
                       </Button>
                       <Button
                         size="sm"
@@ -662,7 +681,7 @@ export default function LeaseRequestsPage() {
                   <Badge variant="outline" className={cn("border", statusColors[viewRequest.status])}>{viewRequest.status}</Badge>
                   <span className="text-muted-foreground">{viewRequest.requestorName}</span>
                   <span className="text-muted-foreground font-mono text-xs">{viewRequest.mobile}</span>
-                  {canUseAdminFallback && viewRequest.status === "Pending" && (
+                  {canUseAdminFallback && awaitsDecision(viewRequest.status) && (
                     <div className="ml-auto flex items-center gap-2">
                       <Button
                         size="sm"
@@ -670,7 +689,7 @@ export default function LeaseRequestsPage() {
                         onClick={() => void handleApprove(viewRequest)}
                         disabled={submittingAction}
                       >
-                        <CheckCircle className="h-3.5 w-3.5" /> Approve
+                        <CheckCircle className="h-3.5 w-3.5" /> {viewRequest.status === "Expired" ? "Re-approve" : "Approve"}
                       </Button>
                       <Button
                         size="sm"

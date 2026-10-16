@@ -93,7 +93,9 @@ export default function ApprovalDetail() {
           preferredCenter:
             (row.fulfillment_centers ?? []).length > 0
               ? (row.fulfillment_centers ?? []).map((center) => center.center_name).join(", ")
-              : "Awaiting stock mapping",
+              : status === "Expired"
+                ? "Stock released"
+                : "Awaiting stock mapping",
           referredBy: row.reference_name || "Not provided",
           submittedDate: row.created_at.slice(0, 10),
           daysWaiting: 0,
@@ -131,6 +133,7 @@ export default function ApprovalDetail() {
   }
 
   const isPending = request.status === "Pending";
+  const isExpired = request.status === "Expired";
 
   const handleApprove = async () => {
     // Approves this request and returns to approvals queue.
@@ -143,7 +146,7 @@ export default function ApprovalDetail() {
       toast.error(`Failed to approve ${request.token}`);
       return;
     }
-    toast.success(`Request ${request.token} approved`);
+    toast.success(`Request ${request.token} ${isExpired ? "re-approved" : "approved"}`);
     navigate("/approvals");
   };
 
@@ -286,17 +289,25 @@ export default function ApprovalDetail() {
             </div>
           )}
           {request.rejectionReason && <p className="text-destructive bg-destructive/5 p-3 rounded-lg">{request.rejectionReason}</p>}
+          {isExpired && (
+            <p className="text-warning bg-warning/5 p-3 rounded-lg">
+              This request was approved but not collected within the pickup window, so its reserved stock was released.
+              Re-approve it to reserve stock again, or reject it.
+            </p>
+          )}
         </CardContent>
       </Card>
 
-      {isPending && (
+      {(isPending || isExpired) && (
         <div className="sticky bottom-0 bg-card border-t border-border p-4 -mx-4 lg:-mx-6 flex flex-col sm:flex-row gap-3">
           <Button className="flex-1 bg-success hover:bg-success/90 text-success-foreground h-11 gap-1" onClick={() => setShowApproveConfirm(true)}>
-            <CheckCircle className="h-4 w-4" /> Approve
+            <CheckCircle className="h-4 w-4" /> {isExpired ? "Re-approve" : "Approve"}
           </Button>
-          <Button variant="outline" className="flex-1 h-11 gap-1" onClick={handleEditOpen}>
-            <Pencil className="h-4 w-4" /> Edit
-          </Button>
+          {isPending && (
+            <Button variant="outline" className="flex-1 h-11 gap-1" onClick={handleEditOpen}>
+              <Pencil className="h-4 w-4" /> Edit
+            </Button>
+          )}
           <Button variant="destructive" className="flex-1 h-11 gap-1" onClick={() => setShowRejectModal(true)}>
             <XCircle className="h-4 w-4" /> Reject
           </Button>
@@ -306,12 +317,16 @@ export default function ApprovalDetail() {
       <AlertDialog open={showApproveConfirm} onOpenChange={setShowApproveConfirm}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Approve this request?</AlertDialogTitle>
-            <AlertDialogDescription>This will approve lease request {request.token} for {request.requestorName}.</AlertDialogDescription>
+            <AlertDialogTitle>{isExpired ? "Re-approve this request?" : "Approve this request?"}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {isExpired
+                ? `This will re-approve lease request ${request.token} for ${request.requestorName}, reserve stock again and resend the approval SMS.`
+                : `This will approve lease request ${request.token} for ${request.requestorName}.`}
+            </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction className="bg-success hover:bg-success/90" onClick={handleApprove}>Approve</AlertDialogAction>
+            <AlertDialogAction className="bg-success hover:bg-success/90" onClick={handleApprove}>{isExpired ? "Re-approve" : "Approve"}</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

@@ -1,5 +1,5 @@
 export type AssetStatus = "Available" | "Leased" | "Under Repair" | "Retired";
-export type LeaseStatus = "Pending" | "Approved" | "Rejected" | "Active" | "Closed";
+export type LeaseStatus = "Pending" | "Approved" | "Rejected" | "Active" | "Closed" | "Expired";
 
 export type AssetView = {
   id: string;

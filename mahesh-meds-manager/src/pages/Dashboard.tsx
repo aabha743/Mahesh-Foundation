@@ -22,9 +22,10 @@ const statusVariant: Record<string, "default" | "secondary" | "destructive"> = {
   Rejected: "destructive",
   Active: "secondary",
   Closed: "secondary",
+  Expired: "secondary",
 };
 
-type LeaseRow = { token: string; name: string; skus: string; status: "Pending" | "Approved" | "Rejected" | "Active" | "Closed"; date: string };
+type LeaseRow = { token: string; name: string; skus: string; status: "Pending" | "Approved" | "Rejected" | "Active" | "Closed" | "Expired"; date: string };
 type AlertRow = { type: "warranty" | "overdue"; message: string; date: string };
 
 export default function Dashboard() {
@@ -65,7 +66,9 @@ export default function Dashboard() {
                     ? "Active"
                     : r.status === "closed"
                       ? "Closed"
-                      : "Pending",
+                      : r.status === "expired"
+                        ? "Expired"
+                        : "Pending",
             date: r.created_at.slice(0, 10),
           })),
         );
