@@ -592,47 +592,48 @@ def invalidate_permission_cache(user_id: str) -> None:
     _permission_cache.pop(user_id, None)
 
 
+def required_lease_permission(
+    payload: LeaseRequestUpdate,
+    lease: LeaseRequest,
+    existing_items: list[LeaseItem],
+) -> str:
+    """Decide which permission a lease update needs from what it changes compared with the stored request:
+    - assigning a device not yet on the request (full or partial issue) -> devices.issue
+    - removing an assigned device, closing, or a partial return -> devices.collect
+    - approving a pending or expired request -> requests.approve
+    - rejecting -> requests.reject
+    - anything else, e.g. an approver changing items or notes -> requests.edit
+    """
+    if payload.status == "rejected":
+        return "requests.reject"
+    if payload.status == "closed":
+        return "devices.collect"
+    if payload.status == "active" and payload.notes is not None and payload.notes.startswith("Partial return:"):
+        return "devices.collect"
+    if payload.items is not None:
+        assigned_before = {item.asset_id for item in existing_items if item.asset_id}
+        assigned_after = {item.asset_id for item in payload.items if item.asset_id}
+        if assigned_after - assigned_before:
+            return "devices.issue"
+        if assigned_before - assigned_after:
+            return "devices.collect"
+    if payload.status == "approved" and lease.status in {"pending", "expired"}:
+        return "requests.approve"
+    return "requests.edit"
+
+
 def require_lease_permission(
+    lease_id: str,
     payload: LeaseRequestUpdate,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ) -> User:
-    """
-    Dependency for lease request PATCH that checks permission based on the action type.
-    Maps payload actions to required permissions:
-    - approve -> requests.approve
-    - reject -> requests.reject
-    - edit/items changes -> requests.edit
-    - issue devices -> devices.issue
-    - collect devices -> devices.collect
-    """
-    # Determine required permission based on payload
-    required_permission = None
-
-    if payload.status == "approved":
-        required_permission = "requests.approve"
-    elif payload.status == "rejected":
-        required_permission = "requests.reject"
-    elif payload.status == "closed":
-        required_permission = "devices.collect"
-    elif (
-        payload.status == "active"
-        and payload.notes is not None
-        and payload.notes.startswith("Partial return:")
-    ):
-        required_permission = "devices.collect"
-    elif payload.items is not None:
-        # Items being edited (issuing/collecting devices)
-        # Check if all items have asset_ids (issuing) or being removed (collecting)
-        items = payload.items
-        has_assets = any(item.asset_id for item in items)
-        if has_assets:
-            required_permission = "devices.issue"
-        else:
-            required_permission = "devices.collect"
-    else:
-        # Generic edit
-        required_permission = "requests.edit"
+    """Dependency for lease request PATCH; see required_lease_permission for the mapping."""
+    lease = db.get(LeaseRequest, lease_id)
+    if not lease:
+        raise HTTPException(status_code=404, detail="Lease request not found")
+    existing_items = db.query(LeaseItem).filter(LeaseItem.lease_request_id == lease.id).all()
+    required_permission = required_lease_permission(payload, lease, existing_items)
 
     permissions = get_effective_permissions(current_user, db)
 
@@ -799,6 +800,42 @@ def reserve_stock(db: Session, lease: LeaseRequest, sku_ids: list[str], release_
             )
             created += 1
     return created
+
+
+def lease_devices(db: Session, lease: LeaseRequest, lines: list[dict], current_user: User) -> None:
+    """Check the devices newly issued on a request and mark them leased in the same transaction as the update.
+
+    A device already marked leased is accepted only if no other open request holds it, so an issue
+    started from an older frontend (which marked devices leased in separate calls first) still completes.
+    """
+    asset_ids = [line["asset_id"] for line in lines]
+    if len(set(asset_ids)) != len(asset_ids):
+        raise HTTPException(status_code=400, detail="The same device was selected for more than one line")
+    center_scoped = is_center_scoped_operator(current_user, db)
+    assets: list[Asset] = []
+    for line in lines:
+        asset = db.get(Asset, line["asset_id"])
+        if not asset or not asset.is_active:
+            raise HTTPException(status_code=400, detail="Selected device was not found")
+        if asset.sku_id != line["sku_id"]:
+            raise HTTPException(status_code=400, detail=f"Device {asset.serial_number} is not the requested model")
+        if center_scoped and asset.center_id != current_user.center_id:
+            raise HTTPException(status_code=403, detail=f"Device {asset.serial_number} is not at your center")
+        if asset.status not in {"available", "leased"}:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Device {asset.serial_number} is not available ({asset_status_to_api(asset.status)})",
+            )
+        held_elsewhere = db.query(LeaseItem.id).filter(
+            LeaseItem.asset_id == asset.id,
+            LeaseItem.returned_at.is_(None),
+            LeaseItem.lease_request_id != lease.id,
+        ).first()
+        if held_elsewhere:
+            raise HTTPException(status_code=400, detail=f"Device {asset.serial_number} is already issued on another request")
+        assets.append(asset)
+    for asset in assets:
+        asset.status = "leased"
 
 
 def parse_extension_duration_days(requested_duration: str) -> int | None:
@@ -1954,8 +1991,8 @@ def build_fulfillment_plan(db: Session, lease_request_id: str) -> tuple[list[dic
 
 
 def fulfillment_plan_for(db: Session, req: LeaseRequest) -> tuple[list[dict], str | None]:
-    """Fulfillment plan for display; an expired request has nothing to collect until re-approved."""
-    if req.status == "expired":
+    """Pickup guidance for display: only pending and approved requests still have devices to collect."""
+    if req.status not in {"pending", "approved"}:
         return [], None
     return build_fulfillment_plan(db, req.id)
 
@@ -2553,11 +2590,19 @@ def update_lease_request(
                 raise HTTPException(status_code=400, detail=f"Invalid sku_id in items: {item['sku_id']}")
     if payload.status == "expired":
         raise HTTPException(status_code=400, detail="Requests are marked expired automatically when the pickup window passes")
-    was_expired = lease.status == "expired"
+    previous_status = lease.status
+    was_expired = previous_status == "expired"
     if was_expired:
         assigns_devices = items_payload is not None and any(item.get("asset_id") for item in items_payload)
         if payload.status not in {"approved", "rejected"} or assigns_devices:
             raise HTTPException(status_code=400, detail=EXPIRED_REQUEST_DETAIL)
+    if items_payload is not None:
+        assigned_before = {item.asset_id for item in existing_items if item.asset_id}
+        newly_issued = [item for item in items_payload if item.get("asset_id") and item["asset_id"] not in assigned_before]
+        if newly_issued:
+            if previous_status not in {"approved", "issued"}:
+                raise HTTPException(status_code=400, detail="Devices can only be issued against an approved request")
+            lease_devices(db, lease, newly_issued, current_user)
     if "status" in data and data["status"] is not None:
         data["status"] = lease_status_to_db(data["status"])
     for key, value in data.items():
@@ -2575,6 +2620,7 @@ def update_lease_request(
             asset_id = item.get("asset_id")
             previous_item = existing_item_by_assignment.get((item["sku_id"], asset_id)) if asset_id else None
             item_issued_at = previous_item.issued_at if previous_item else None
+            item_issued_by = previous_item.issued_by if previous_item else None
             item_due_date = previous_item.due_date if previous_item else None
             item_returned_at = previous_item.returned_at if previous_item else None
             item_returned_to = previous_item.returned_to if previous_item else None
@@ -2583,6 +2629,7 @@ def update_lease_request(
 
             if asset_id and item_due_date is None:
                 item_issued_at = issued_at_now
+                item_issued_by = current_user.id
                 item_due_date = compute_due_date(lease.expected_duration, item_issued_at)
             if asset_id and item_due_date:
                 active_due_dates.append(item_due_date)
@@ -2593,6 +2640,7 @@ def update_lease_request(
                     quantity_requested=item.get("quantity_requested", 1),
                     asset_id=asset_id,
                     issued_at=item_issued_at,
+                    issued_by=item_issued_by,
                     due_date=item_due_date,
                     returned_at=item_returned_at,
                     returned_to=item_returned_to,
@@ -2652,10 +2700,13 @@ def update_lease_request(
 
     db.commit()
     db.refresh(lease)
+    # Only a real change of status counts: a partial issue also sends status "approved".
+    became_approved = previous_status in {"pending", "expired"} and lease.status == "approved"
+    became_rejected = previous_status != "rejected" and lease.status == "rejected"
     action = "request_updated"
-    if payload.status == "approved":
+    if became_approved:
         action = "approve_request"
-    elif payload.status == "rejected":
+    elif became_rejected:
         action = "reject_request"
     write_audit_log(
         db,
@@ -2670,7 +2721,7 @@ def update_lease_request(
     )
     db.commit()
 
-    if payload.status == "approved":
+    if became_approved:
         fulfillment_centers, fulfillment_message = build_fulfillment_plan(db, lease.id)
         center_names_str = fulfillment_center_names(fulfillment_centers) or "our center"
         send_template_sms(
@@ -2697,7 +2748,7 @@ def update_lease_request(
                     db=db,
                     reference_id=lease.id,
                 )
-    elif payload.status == "rejected":
+    elif became_rejected:
         send_template_sms(
             mobile=lease.mobile,
             event_name="request_rejected_user",

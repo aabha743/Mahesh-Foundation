@@ -13,7 +13,7 @@ import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
 import { type ApprovalRequest } from "@/data/approverMockData";
 import { apiFetch } from "@/lib/api";
-import { formatLeaseStatus } from "@/lib/utils";
+import { formatLeaseStatus, formatPickupCenterLabel } from "@/lib/utils";
 
 export default function ApprovalDetail() {
   const { id } = useParams();
@@ -32,10 +32,11 @@ export default function ApprovalDetail() {
     // Loads a single approval request with SKU availability and fulfillment-center hints.
     async function loadRequest() {
       try {
-        const [requests, skus] = await Promise.all([
+        const [requests, skus, centers] = await Promise.all([
           apiFetch<Array<{
             id: string;
             token_number: string;
+            preferred_center_id: string | null;
             requestor_name: string;
             patient_name?: string | null;
             delivery_address?: string | null;
@@ -54,6 +55,7 @@ export default function ApprovalDetail() {
             items?: Array<{ sku_id: string; sku_name: string; quantity_requested: number }>;
           }>>("/api/v1/lease-requests"),
           apiFetch<Array<{ id: string; name: string }>>("/api/v1/skus"),
+          apiFetch<Array<{ id: string; name: string }>>("/api/v1/centers?include_inactive=true"),
         ]);
 
         const row = requests.find((r) => r.id === id);
@@ -90,12 +92,11 @@ export default function ApprovalDetail() {
           mobile: row.mobile,
           aadhar: row.aadhar_number,
           items,
-          preferredCenter:
-            (row.fulfillment_centers ?? []).length > 0
-              ? (row.fulfillment_centers ?? []).map((center) => center.center_name).join(", ")
-              : status === "Expired"
-                ? "Stock released"
-                : "Awaiting stock mapping",
+          preferredCenter: formatPickupCenterLabel(
+            status,
+            (row.fulfillment_centers ?? []).map((center) => center.center_name),
+            centers.find((center) => center.id === row.preferred_center_id)?.name,
+          ),
           referredBy: row.reference_name || "Not provided",
           submittedDate: row.created_at.slice(0, 10),
           daysWaiting: 0,
