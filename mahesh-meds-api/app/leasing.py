@@ -243,30 +243,7 @@ def active_lease_items(db: Session, lease_request_id: str) -> list[LeaseItem]:
     )
 
 
-def ensure_lease_extension_schema(db: Session) -> None:
-    if db.info.get("lease_extension_schema_ready"):
-        return
-
-    column_exists = db.execute(
-        text(
-            """
-            SELECT COUNT(*)
-            FROM information_schema.columns
-            WHERE table_schema = DATABASE()
-              AND table_name = 'lease_extensions'
-              AND column_name = 'requested_due_date'
-            """
-        )
-    ).scalar()
-    if not column_exists:
-        db.execute(text("ALTER TABLE lease_extensions ADD COLUMN requested_due_date DATE NULL"))
-        db.commit()
-
-    db.info["lease_extension_schema_ready"] = True
-
-
 def latest_extension_summary(db: Session, lease_request_id: str) -> dict | None:
-    ensure_lease_extension_schema(db)
     latest = (
         db.query(LeaseExtension)
         .filter(LeaseExtension.lease_request_id == lease_request_id)
@@ -290,7 +267,6 @@ def latest_extension_summary(db: Session, lease_request_id: str) -> dict | None:
 
 
 def extension_history_summary(db: Session, lease_request_id: str) -> list[dict]:
-    ensure_lease_extension_schema(db)
     rows = (
         db.query(LeaseExtension)
         .filter(LeaseExtension.lease_request_id == lease_request_id)
@@ -320,7 +296,6 @@ MAX_APPROVED_EXTENSIONS_PER_LEASE = 2
 
 
 def count_approved_extensions(db: Session, lease: LeaseRequest) -> int:
-    ensure_lease_extension_schema(db)
     return (
         db.query(LeaseExtension)
         .filter(
@@ -340,7 +315,6 @@ def evaluate_extension_eligibility(
     """
     Returns (eligible, reason, pending_exists) for public/staff lease extension flows.
     """
-    ensure_lease_extension_schema(db)
     pending_query = db.query(LeaseExtension).filter(
         LeaseExtension.lease_request_id == lease.id,
         LeaseExtension.status == "pending",

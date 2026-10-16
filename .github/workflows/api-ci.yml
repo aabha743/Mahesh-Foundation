@@ -73,6 +73,12 @@ jobs:
             "INSERT INTO centers (id, name, city) VALUES (UUID(), 'CI Fixture Center', 'Test');
              INSERT INTO skus (id, name, sku_code) VALUES (UUID(), 'CI Fixture Device', 'CI-FIXTURE-1');"
 
+      # schema.sql already contains every migration, so each one must be a no-op here (safe to re-run).
+      - name: Apply migrations to the fresh schema
+        run: |
+          python -m app.migrate apply
+          python -m app.migrate status
+
       - name: Run tests
         run: |
           export JWT_SECRET="$(python -c 'import secrets; print(secrets.token_hex(32))')"
