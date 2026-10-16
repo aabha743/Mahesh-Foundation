@@ -180,6 +180,7 @@ function humanizeAuditAction(action: string): string {
     reject_request: "Rejected",
     request_expired: "Expired (pickup window passed)",
     request_updated: "Request / fulfillment updated",
+    devices_returned: "Devices returned",
     token_viewed: "Token looked up",
   };
   return labels[action] ?? action.replace(/_/g, " ");
@@ -219,6 +220,10 @@ function deriveMilestones(sortedAsc: AuditLogRow[], staff: StaffLookup) {
         closedBy = formatActorFromLog(log, staff);
       }
     }
+    if (log.action === "devices_returned" && strField(log.new_value?.status) === "returned") {
+      closedAt = log.created_at;
+      closedBy = formatActorFromLog(log, staff);
+    }
   }
 
   return { approvedAt, approvedBy, issuedAt, issuedBy, closedAt, closedBy, rejectedAt, rejectedBy };
@@ -238,6 +243,19 @@ function timelineDescription(log: AuditLogRow): string | null {
   if (log.action === "approve_request") {
     const c = strField(nv.approval_comments);
     return c ? `Comments: ${c}` : null;
+  }
+  if (log.action === "devices_returned") {
+    const count = Array.isArray(nv.devices) ? nv.devices.length : 0;
+    const stillOut = typeof nv.still_out === "number" ? nv.still_out : 0;
+    const condition = strField(nv.condition);
+    const notes = strField(nv.notes);
+    return [
+      `${count} device${count === 1 ? "" : "s"} returned${condition ? ` (${condition})` : ""}`,
+      stillOut > 0 ? `${stillOut} still out` : "all devices back",
+      notes ? `Notes: ${notes}` : null,
+    ]
+      .filter(Boolean)
+      .join(" · ");
   }
   if (log.action === "reject_request") {
     const r = strField(nv.rejection_reason);

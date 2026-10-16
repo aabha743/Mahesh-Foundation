@@ -56,6 +56,7 @@ function formatActivityAction(action: string) {
     asset_updated: "Asset updated",
     token_viewed: "Token looked up",
     devices_issued: "Device issued",
+    devices_returned: "Devices returned",
   };
   if (known[action]) return known[action];
   return action
