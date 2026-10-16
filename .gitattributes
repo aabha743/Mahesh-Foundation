@@ -1,0 +1,2 @@
+# Shell scripts and systemd units run on the Linux VM and must keep LF endings.
+ops/** text eol=lf

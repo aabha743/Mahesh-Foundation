@@ -68,11 +68,36 @@ Welcome to the **Mahesh Foundation Medical Equipment Services (MES) Portal** ope
 ### 4. System Maintenance & Operational Commands
 
 #### **Database Daily Backup Verification**
-Automated backups run every night at **2:00 AM** and are stored at `/var/backups/mahesh-meds/`.
-To manually run a backup anytime:
+Automated backups run every night at **2:00 AM IST** (systemd timer `mahesh-db-backup.timer`).
+* Each dump is verified, kept on the VM for 7 days at `/var/backups/mahesh-meds/` (root only), and uploaded to the private Cloud Storage bucket `gs://mf-medical-equipment-seva-db-backups`.
+* In the bucket, `daily/` copies are kept for 35 days and `monthly/` copies (taken on the 1st) for 13 months; Cloud Storage deletes older ones automatically.
+* The VM runs as the `mes-vm-runtime` service account, which can only *add* backups to the bucket; it cannot read or delete them.
+
 ```bash
-sudo /usr/local/bin/backup_mahesh_meds.sh
+# When did the last backup run, and when is the next one?
+sudo systemctl list-timers mahesh-db-backup.timer
+
+# Result of the last backup (look for "backup ok")
+sudo journalctl -u mahesh-db-backup.service -n 20
+
+# Run a backup right now
+sudo systemctl start mahesh-db-backup.service
+
+# Prove the newest local backup restores (uses a temporary database, then drops it)
+sudo /usr/local/sbin/mahesh-db-verify-restore
 ```
+
+#### **Restoring the Database from a Backup**
+Only do this to recover from data loss; it replaces the live data.
+1. On a machine signed in to the Google Cloud project as an owner, download the backup you need:
+   `gcloud storage ls gs://mf-medical-equipment-seva-db-backups/daily/` then `gcloud storage cp gs://mf-medical-equipment-seva-db-backups/daily/<file>.sql.gz .`
+   (Files written on the last 7 nights are also on the VM in `/var/backups/mahesh-meds/`.)
+2. Copy it to the VM if needed, then stop the API: `sudo systemctl stop mahesh-meds-api.service`
+3. Check the file first: `sudo /usr/local/sbin/mahesh-db-verify-restore /path/to/<file>.sql.gz`
+4. Restore: `zcat /path/to/<file>.sql.gz | sudo mariadb mahesh_meds`
+5. Start the API: `sudo systemctl start mahesh-meds-api.service`
+
+Backup files contain patient Aadhaar numbers and addresses: never email them or keep copies on personal devices.
 
 #### **Checking System Service Status**
 ```bash
