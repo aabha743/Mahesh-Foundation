@@ -86,7 +86,7 @@ if [ -n "$previous" ]; then
     rm -rf "$tmp"
 fi
 
-tar -czf "$REL.tar.gz" -C "$REL" .
+(cd "$out" && tar -czf "release-$SHORT.tar.gz" -C "release-$SHORT" .)   # relative names: GNU tar reads "C:/..." as host:path
 BUNDLE_SHA256="$(sha256sum "$REL.tar.gz" | cut -d' ' -f1)"
 cat > "$REL.env" <<EOF
 RELEASE=$SHA
