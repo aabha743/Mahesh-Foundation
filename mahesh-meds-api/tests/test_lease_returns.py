@@ -5,7 +5,8 @@ from types import SimpleNamespace
 from fastapi.testclient import TestClient
 
 import lease_test_support as support
-from app.main import app, create_access_token
+from app.main import app
+from app.security import create_access_token
 from app.models import Asset, LeaseItem, LeaseRequest, User
 
 

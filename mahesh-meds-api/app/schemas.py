@@ -332,3 +332,24 @@ class LeaseExtensionReview(BaseModel):
     status: str
     approver_comments: str | None = None
     rejection_reason: str | None = None
+
+
+# --- Staff login ---
+class OTPRequest(BaseModel):
+    mobile: str
+    purpose: str = "login"
+
+
+class OTPVerify(BaseModel):
+    mobile: str
+    otp: str
+    purpose: str = "login"
+
+
+class MeResponse(BaseModel):
+    id: str
+    name: str
+    mobile: str
+    center_id: str | None
+    roles: list[str]
+    permissions: list[str]

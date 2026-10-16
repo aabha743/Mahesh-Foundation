@@ -1,0 +1,699 @@
+"""Lease requests: public token/mobile lookup, the request list, submit, approve/issue updates and returns."""
+
+from datetime import date, datetime, UTC, timedelta
+
+from fastapi import APIRouter, Depends, HTTPException, Request
+from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
+
+from app.database import get_db
+from app.models import (
+    Center,
+    User,
+    SKU,
+    Asset,
+    LeaseRequest,
+    LeaseItem,
+    SKUBlock,
+)
+from app.schemas import (
+    LeaseRequestCreate,
+    LeaseRequestOut,
+    LeaseRequestListOut,
+    PublicLeaseRequestOut,
+    LeaseRequestUpdate,
+    LeaseReturnCreate,
+    LeaseReturnOut,
+)
+from app.services.sms import send_template_sms
+from app.security import validate_csrf
+from app.permissions import (
+    active_users_with_permission,
+    active_users_with_role,
+    enforce_center_resource_access,
+    is_center_scoped_operator,
+    require_lease_permission,
+    require_permission,
+    require_requests_visibility,
+)
+from app.leasing import (
+    EXPIRED_REQUEST_DETAIL,
+    PICKUP_WINDOW_HOURS,
+    RETURNABLE_LEASE_DB_STATUSES,
+    RETURN_CONDITION_ASSET_STATUS,
+    asset_status_to_api,
+    build_fulfillment_plan,
+    build_public_lease_lookup_result,
+    compute_due_date,
+    describe_return_condition,
+    fulfillment_center_names,
+    fulfillment_plan_for,
+    lease_devices,
+    lease_status_to_api,
+    lease_status_to_db,
+    normalize_public_tracking_mobile,
+    reserve_stock,
+    resolve_lease_db_status,
+    settle_lease_after_return,
+)
+from app.audit import write_audit_log
+
+router = APIRouter()
+
+
+@router.get("/api/v1/lease-requests/by-token/{token}", response_model=PublicLeaseRequestOut)
+def get_lease_request_by_token(token: str, request: Request, db: Session = Depends(get_db)):
+    """Public token lookup endpoint with request header + line items."""
+    req = (
+        db.query(LeaseRequest)
+        .filter(func.lower(LeaseRequest.token_number) == token.strip().lower())
+        .first()
+    )
+    if not req:
+        raise HTTPException(status_code=404, detail="Lease request not found")
+    result = build_public_lease_lookup_result(db, req)
+    write_audit_log(
+        db,
+        request,
+        action="token_viewed",
+        entity_type="token",
+        entity_id=req.id,
+        center_id=req.preferred_center_id,
+        new_value={"token": req.token_number, "status": lease_status_to_api(req.status)},
+    )
+    db.commit()
+    return result
+
+
+@router.get("/api/v1/lease-requests/by-mobile/{mobile}", response_model=list[PublicLeaseRequestOut])
+def get_lease_requests_by_mobile(mobile: str, request: Request, db: Session = Depends(get_db)):
+    """Public mobile lookup endpoint returning all requests linked to that number."""
+    normalized_mobile = normalize_public_tracking_mobile(mobile)
+    if not normalized_mobile:
+        raise HTTPException(status_code=400, detail="Enter a valid 10-digit mobile number")
+
+    requests = (
+        db.query(LeaseRequest)
+        .filter(LeaseRequest.mobile == normalized_mobile)
+        .order_by(LeaseRequest.created_at.desc())
+        .all()
+    )
+    if not requests:
+        raise HTTPException(status_code=404, detail="No lease requests found for this mobile number")
+
+    results = [build_public_lease_lookup_result(db, lease_request) for lease_request in requests]
+    write_audit_log(
+        db,
+        request,
+        action="mobile_lookup_viewed",
+        entity_type="token",
+        entity_id=None,
+        new_value={"mobile": normalized_mobile, "match_count": len(results)},
+    )
+    db.commit()
+    return results
+
+
+@router.get("/api/v1/lease-requests/by-token/{token}/issue-context/{center_id}")
+def get_issue_context(
+    token: str,
+    center_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("devices.issue")),
+):
+    """Issue workflow helper: line-level availability at the queried center."""
+    req = (
+        db.query(LeaseRequest)
+        .filter(func.lower(LeaseRequest.token_number) == token.strip().lower())
+        .first()
+    )
+    if not req:
+        raise HTTPException(status_code=404, detail="Lease request not found")
+    if not db.get(Center, center_id):
+        raise HTTPException(status_code=400, detail="Invalid center_id")
+    enforce_center_resource_access(current_user, db, center_id)
+
+    sku_rows = db.execute(
+        select(
+            LeaseItem.lease_request_id,
+            LeaseItem.sku_id,
+            SKU.name,
+            LeaseItem.quantity_requested,
+            LeaseItem.asset_id,
+            LeaseItem.due_date,
+        )
+        .join(SKU, SKU.id == LeaseItem.sku_id)
+        .where(LeaseItem.lease_request_id == req.id)
+    ).all()
+    skus = [name for _, _, name, _, _, _ in sku_rows]
+    items = [
+        {
+            "sku_id": sku_id,
+            "sku_name": name,
+            "quantity_requested": quantity_requested,
+            "asset_id": asset_id,
+            "due_date": due_date,
+        }
+        for _, sku_id, name, quantity_requested, asset_id, due_date in sku_rows
+    ]
+
+    pending_sku_ids = [item["sku_id"] for item in items if not item["asset_id"]]
+    availability_by_sku: dict[str, dict[str, int]] = {}
+    if pending_sku_ids:
+        availability_rows = db.execute(
+            select(Asset.sku_id, Asset.center_id, func.count(Asset.id))
+            .where(Asset.status == "available", Asset.sku_id.in_(pending_sku_ids), Asset.center_id.is_not(None))
+            .group_by(Asset.sku_id, Asset.center_id)
+        ).all()
+        for sku_id, c_id, count in availability_rows:
+            availability_by_sku.setdefault(sku_id, {})[c_id] = int(count)
+
+    centers = db.query(Center).all()
+    center_name_by_id = {c.id: c.name for c in centers}
+
+    issue_items = []
+    for item in items:
+        sku_id = item["sku_id"]
+        center_counts = availability_by_sku.get(sku_id, {})
+        source_centers = [
+            {"center_id": c_id, "center_name": center_name_by_id.get(c_id, "Center"), "available_count": count}
+            for c_id, count in center_counts.items()
+            if c_id != center_id and count > 0
+        ]
+        issue_items.append(
+            {
+                **item,
+                "local_available_count": center_counts.get(center_id, 0),
+                "source_centers": source_centers,
+            }
+        )
+
+    write_audit_log(
+        db,
+        request,
+        action="issue_context_viewed",
+        entity_type="lease_request",
+        entity_id=req.id,
+        center_id=center_id,
+        new_value={"token": req.token_number, "center_id": center_id},
+        current_user=current_user,
+    )
+    db.commit()
+
+    return {
+        **LeaseRequestOut.model_validate(req).model_dump(),
+        "status": lease_status_to_api(req.status),
+        "skus": skus,
+        "items": items,
+        "issue_items": issue_items,
+    }
+
+
+@router.get("/api/v1/lease-requests", response_model=list[LeaseRequestListOut])
+def list_lease_requests(
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_requests_visibility),
+):
+    """Lists lease requests with denormalized sku/item arrays for frontend tables."""
+    query = db.query(LeaseRequest)
+    # Center-specific relevance is now derived from actual asset location/home-center data.
+    # if is_center_scoped_operator(current_user, db):
+    #     query = query.filter(LeaseRequest.preferred_center_id == current_user.center_id)
+    requests = query.order_by(LeaseRequest.created_at.desc()).all()
+    write_audit_log(db, request, action="requests_list_viewed", entity_type="lease_request", current_user=current_user)
+    db.commit()
+    if not requests:
+        return []
+
+    request_ids = [r.id for r in requests]
+    sku_rows = db.execute(
+        select(
+            LeaseItem.lease_request_id,
+            LeaseItem.sku_id,
+            SKU.name,
+            LeaseItem.quantity_requested,
+            LeaseItem.asset_id,
+            LeaseItem.due_date,
+            LeaseItem.returned_at,
+        )
+        .join(SKU, SKU.id == LeaseItem.sku_id)
+        .where(LeaseItem.lease_request_id.in_(request_ids))
+    ).all()
+
+    sku_map: dict[str, list[str]] = {}
+    item_map: dict[str, list[dict[str, str | int]]] = {}
+    for lease_request_id, sku_id, sku_name, quantity_requested, asset_id, due_date, returned_at in sku_rows:
+        sku_map.setdefault(lease_request_id, []).append(sku_name)
+        item_map.setdefault(lease_request_id, []).append(
+            {
+                "sku_id": sku_id,
+                "sku_name": sku_name,
+                "quantity_requested": quantity_requested,
+                "asset_id": asset_id,
+                "due_date": due_date,
+                "returned_at": returned_at,
+            }
+        )
+
+    response_rows = []
+    for req in requests:
+        fulfillment_centers, fulfillment_message = fulfillment_plan_for(db, req)
+        response_rows.append(
+            {
+                **LeaseRequestOut.model_validate(req).model_dump(),
+                "status": lease_status_to_api(req.status),
+                "skus": sku_map.get(req.id, []),
+                "items": item_map.get(req.id, []),
+                "fulfillment_centers": fulfillment_centers,
+                "fulfillment_message": fulfillment_message,
+            }
+        )
+    return response_rows
+
+
+@router.post("/api/v1/lease-requests", response_model=LeaseRequestOut)
+def create_lease_request(
+    payload: LeaseRequestCreate,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    """Creates lease request + lease items and derives fulfillment-aware status (PUBLIC - no auth required)."""
+    if not payload.preferred_center_id or not payload.preferred_center_id.strip():
+        raise HTTPException(status_code=400, detail="Please select a pickup center.")
+
+    if not payload.reference_name or not payload.reference_name.strip():
+        raise HTTPException(status_code=400, detail="Please provide a referral name.")
+
+    if not payload.patient_name or not payload.patient_name.strip():
+        raise HTTPException(status_code=400, detail="Patient name is required.")
+
+    if not payload.delivery_address or not payload.delivery_address.strip():
+        raise HTTPException(status_code=400, detail="Delivery address is required.")
+
+    if not payload.delivery_landmark or not payload.delivery_landmark.strip():
+        raise HTTPException(status_code=400, detail="Delivery landmark is required.")
+
+    if payload.expected_duration not in {"1 Week", "2 Weeks"}:
+        raise HTTPException(
+            status_code=400,
+            detail="The maximum expected lease duration is 2 weeks. Allowed values: 1 Week, 2 Weeks."
+        )
+
+    for item in payload.items:
+        if not db.get(SKU, item.sku_id):
+            raise HTTPException(status_code=400, detail=f"Invalid sku_id in items: {item.sku_id}")
+
+    payload_data = payload.model_dump()
+    items_payload = payload_data.pop("items", [])
+    payload_data["status"] = lease_status_to_db(payload_data["status"])
+    lease = LeaseRequest(**payload_data)
+    db.add(lease)
+    try:
+        db.flush()
+        for item in items_payload:
+            db.add(
+                LeaseItem(
+                    lease_request_id=lease.id,
+                    sku_id=item["sku_id"],
+                    quantity_requested=item.get("quantity_requested", 1),
+                    asset_id=item.get("asset_id"),
+                )
+            )
+        lease.status = resolve_lease_db_status(
+            lease.status,
+            [item.get("asset_id") for item in items_payload],
+        )
+        
+        # Create active blocks for available stock at preferred center
+        reserve_stock(db, lease, [item["sku_id"] for item in items_payload], release_at=None)
+
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Token number already exists") from None
+    db.refresh(lease)
+    write_audit_log(
+        db,
+        request,
+        action="request_created",
+        entity_type="lease_request",
+        entity_id=lease.id,
+        center_id=None,
+        new_value={"token": lease.token_number, "status": lease_status_to_api(lease.status)},
+    )
+    db.commit()
+
+    send_template_sms(
+        mobile=lease.mobile,
+        event_name="request_submitted_user",
+        variables={"token_number": lease.token_number},
+        db=db,
+        reference_id=lease.id,
+    )
+    sku_ids = [item["sku_id"] for item in items_payload]
+    skus = db.query(SKU).filter(SKU.id.in_(sku_ids)).all()
+    items_str = ", ".join(sku.name for sku in skus) if skus else "N/A"
+    for approver in active_users_with_permission("requests.approve", db):
+        send_template_sms(
+            mobile=approver.mobile,
+            event_name="request_submitted_approver",
+            variables={
+                "requestor_name": lease.requestor_name,
+                "items": items_str,
+            },
+            db=db,
+            reference_id=lease.id,
+        )
+
+    return {
+        **LeaseRequestOut.model_validate(lease).model_dump(),
+        "status": lease_status_to_api(lease.status),
+    }
+
+
+@router.patch("/api/v1/lease-requests/{lease_id}", response_model=LeaseRequestOut)
+def update_lease_request(
+    lease_id: str,
+    payload: LeaseRequestUpdate,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_lease_permission),
+    _: None = Depends(validate_csrf),
+):
+    """Updates lease request header/items; status is re-derived from line assignments.
+    Permission checked dynamically based on action type (approve/reject/edit/issue/collect)."""
+    lease = db.get(LeaseRequest, lease_id)
+    if not lease:
+        raise HTTPException(status_code=404, detail="Lease request not found")
+    before = LeaseRequestOut.model_validate(lease).model_dump()
+    data = payload.model_dump(exclude_unset=True)
+    items_payload = data.pop("items", None)
+    existing_items = db.query(LeaseItem).filter(LeaseItem.lease_request_id == lease.id).all()
+    resource_center_ids = {lease.preferred_center_id} if lease.preferred_center_id else set()
+    relevant_asset_ids = {
+        item.asset_id for item in existing_items if item.asset_id
+    }
+    if items_payload is not None:
+        relevant_asset_ids.update(item.get("asset_id") for item in items_payload if item.get("asset_id"))
+    if relevant_asset_ids:
+        relevant_assets = db.query(Asset).filter(Asset.id.in_(relevant_asset_ids)).all()
+        resource_center_ids.update(
+            asset.home_center_id or asset.center_id
+            for asset in relevant_assets
+            if asset.home_center_id or asset.center_id
+        )
+    enforce_center_resource_access(current_user, db, *resource_center_ids)
+    if items_payload is not None:
+        for item in items_payload:
+            if not db.get(SKU, item["sku_id"]):
+                raise HTTPException(status_code=400, detail=f"Invalid sku_id in items: {item['sku_id']}")
+    if payload.status == "expired":
+        raise HTTPException(status_code=400, detail="Requests are marked expired automatically when the pickup window passes")
+    previous_status = lease.status
+    was_expired = previous_status == "expired"
+    if was_expired:
+        assigns_devices = items_payload is not None and any(item.get("asset_id") for item in items_payload)
+        if payload.status not in {"approved", "rejected"} or assigns_devices:
+            raise HTTPException(status_code=400, detail=EXPIRED_REQUEST_DETAIL)
+    if items_payload is not None:
+        assigned_before = {item.asset_id for item in existing_items if item.asset_id}
+        newly_issued = [item for item in items_payload if item.get("asset_id") and item["asset_id"] not in assigned_before]
+        if newly_issued:
+            if previous_status not in {"approved", "issued"}:
+                raise HTTPException(status_code=400, detail="Devices can only be issued against an approved request")
+            lease_devices(db, lease, newly_issued, current_user)
+    if "status" in data and data["status"] is not None:
+        data["status"] = lease_status_to_db(data["status"])
+        # "active" also covers a partly returned request; don't turn it back into a fully issued one.
+        if data["status"] == "issued" and previous_status == "partially_returned":
+            data["status"] = "partially_returned"
+    if payload.status == "active" and payload.notes and payload.notes.startswith("Partial return:") and lease.notes:
+        # Return screens from before POST /returns send a partial-return summary as the notes: add it, don't replace.
+        data["notes"] = f"{lease.notes}\n{payload.notes}"
+    for key, value in data.items():
+        setattr(lease, key, value)
+    if items_payload is not None:
+        existing_item_by_assignment = {
+            (item.sku_id, item.asset_id): item
+            for item in existing_items
+            if item.asset_id
+        }
+        issued_at_now = datetime.now(UTC).replace(tzinfo=None)
+        active_due_dates: list[date] = []
+        db.query(LeaseItem).filter(LeaseItem.lease_request_id == lease.id).delete()
+        for item in items_payload:
+            asset_id = item.get("asset_id")
+            previous_item = existing_item_by_assignment.get((item["sku_id"], asset_id)) if asset_id else None
+            item_issued_at = previous_item.issued_at if previous_item else None
+            item_issued_by = previous_item.issued_by if previous_item else None
+            item_due_date = previous_item.due_date if previous_item else None
+            item_returned_at = previous_item.returned_at if previous_item else None
+            item_returned_to = previous_item.returned_to if previous_item else None
+            item_return_center_id = previous_item.return_center_id if previous_item else None
+            item_condition_on_return = previous_item.condition_on_return if previous_item else None
+
+            if asset_id and item_due_date is None:
+                item_issued_at = issued_at_now
+                item_issued_by = current_user.id
+                item_due_date = compute_due_date(lease.expected_duration, item_issued_at)
+            if asset_id and item_due_date:
+                active_due_dates.append(item_due_date)
+            db.add(
+                LeaseItem(
+                    lease_request_id=lease.id,
+                    sku_id=item["sku_id"],
+                    quantity_requested=item.get("quantity_requested", 1),
+                    asset_id=asset_id,
+                    issued_at=item_issued_at,
+                    issued_by=item_issued_by,
+                    due_date=item_due_date,
+                    returned_at=item_returned_at,
+                    returned_to=item_returned_to,
+                    return_center_id=item_return_center_id,
+                    condition_on_return=item_condition_on_return,
+                )
+            )
+        lease.status = resolve_lease_db_status(
+            lease.status,
+            [item.get("asset_id") for item in items_payload],
+        )
+        lease.due_date = max(active_due_dates) if active_due_dates else None
+    elif lease.status not in {"rejected", "returned", "partially_returned", "expired"}:
+        lease.status = resolve_lease_db_status(lease.status, [item.asset_id for item in existing_items])
+        active_due_dates = [
+            item.due_date
+            for item in existing_items
+            if item.asset_id and item.due_date and item.returned_at is None
+        ]
+        lease.due_date = max(active_due_dates) if active_due_dates else None
+
+    # Update stock blocks based on request status transitions
+    pickup_deadline = datetime.now(UTC).replace(tzinfo=None) + timedelta(hours=PICKUP_WINDOW_HOURS)
+    if was_expired and lease.status == "approved":
+        # The old holds were released when the request expired, so re-approval reserves afresh.
+        line_items = (
+            items_payload
+            if items_payload is not None
+            else [{"sku_id": item.sku_id, "asset_id": item.asset_id} for item in existing_items]
+        )
+        reserve_stock(db, lease, [item["sku_id"] for item in line_items if not item.get("asset_id")], release_at=pickup_deadline)
+    if lease.status == "approved":
+        db.query(SKUBlock).filter(
+            SKUBlock.lease_request_id == lease.id,
+            SKUBlock.status == "blocked"
+        ).update({
+            "release_at": pickup_deadline
+        }, synchronize_session=False)
+    elif lease.status == "rejected":
+        db.query(SKUBlock).filter(
+            SKUBlock.lease_request_id == lease.id,
+            SKUBlock.status == "blocked"
+        ).update({
+            "status": "released",
+            "release_reason": "rejected",
+            "release_at": datetime.now(UTC).replace(tzinfo=None)
+        }, synchronize_session=False)
+    elif lease.status in {"issued", "returned", "partially_returned"}:
+        db.query(SKUBlock).filter(
+            SKUBlock.lease_request_id == lease.id,
+            SKUBlock.status == "blocked"
+        ).update({
+            "status": "released",
+            "release_reason": "approved_collected",
+            "release_at": datetime.now(UTC).replace(tzinfo=None)
+        }, synchronize_session=False)
+
+    db.commit()
+    db.refresh(lease)
+    # Only a real change of status counts: a partial issue also sends status "approved".
+    became_approved = previous_status in {"pending", "expired"} and lease.status == "approved"
+    became_rejected = previous_status != "rejected" and lease.status == "rejected"
+    action = "request_updated"
+    if became_approved:
+        action = "approve_request"
+    elif became_rejected:
+        action = "reject_request"
+    write_audit_log(
+        db,
+        request,
+        action=action,
+        entity_type="lease_request",
+        entity_id=lease.id,
+        center_id=current_user.center_id,
+        old_value={**before, "token": before.get("token_number")},
+        new_value={**LeaseRequestOut.model_validate(lease).model_dump(), "token": lease.token_number},
+        current_user=current_user,
+    )
+    db.commit()
+
+    if became_approved:
+        fulfillment_centers, fulfillment_message = build_fulfillment_plan(db, lease.id)
+        center_names_str = fulfillment_center_names(fulfillment_centers) or "our center"
+        send_template_sms(
+            mobile=lease.mobile,
+            event_name="request_approved_user",
+            variables={
+                "token_number": lease.token_number,
+                "center_name": center_names_str,
+                "pickup_guidance": f"{center_names_str} team",
+            },
+            db=db,
+            reference_id=lease.id,
+        )
+        for center in fulfillment_centers:
+            for manager in active_users_with_role("center_manager", db, center_id=center["center_id"]):
+                send_template_sms(
+                    mobile=manager.mobile,
+                    event_name="request_approved_center_manager",
+                    variables={
+                        "token_number": lease.token_number,
+                        "requestor_name": lease.requestor_name,
+                        "center_name": center["center_name"],
+                    },
+                    db=db,
+                    reference_id=lease.id,
+                )
+    elif became_rejected:
+        send_template_sms(
+            mobile=lease.mobile,
+            event_name="request_rejected_user",
+            variables={
+                "token_number": lease.token_number,
+                "rejection_reason": lease.rejection_reason or "",
+                "contact_info": lease.rejection_reason or "Mahesh Foundation team",
+            },
+            db=db,
+            reference_id=lease.id,
+        )
+
+    if before.get("status") != "issued" and lease.status == "issued":
+        db_items = db.query(LeaseItem).filter(LeaseItem.lease_request_id == lease.id).all()
+        items_names = [item.sku.name for item in db_items if item.sku]
+        items_str = ", ".join(items_names) if items_names else "N/A"
+        due_date_str = lease.due_date.strftime("%B %d, %Y") if lease.due_date else "N/A"
+        send_template_sms(
+            mobile=lease.mobile,
+            event_name="device_issued_user",
+            variables={
+                "token_number": lease.token_number,
+                "items": items_str,
+                "due_date": due_date_str,
+            },
+            db=db,
+            reference_id=lease.id,
+        )
+
+    return {
+        **LeaseRequestOut.model_validate(lease).model_dump(),
+        "status": lease_status_to_api(lease.status),
+    }
+
+
+@router.post("/api/v1/lease-requests/{lease_id}/returns", response_model=LeaseReturnOut)
+def return_lease_devices(
+    lease_id: str,
+    payload: LeaseReturnCreate,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("devices.collect")),
+    _: None = Depends(validate_csrf),
+):
+    """Takes back devices issued on a request in one transaction: records each return on its line, puts the
+    devices back in stock (or under repair), and sets the request to partly returned or returned."""
+    lease = db.query(LeaseRequest).filter(LeaseRequest.id == lease_id).with_for_update().first()
+    if not lease:
+        raise HTTPException(status_code=404, detail="Lease request not found")
+    asset_status = RETURN_CONDITION_ASSET_STATUS.get(payload.condition)
+    if asset_status is None:
+        raise HTTPException(status_code=400, detail="Choose the condition of the returned devices")
+    if lease.status not in RETURNABLE_LEASE_DB_STATUSES:
+        raise HTTPException(status_code=400, detail="This request has no devices out")
+    asset_ids = [item.asset_id for item in payload.items]
+    if len(set(asset_ids)) != len(asset_ids):
+        raise HTTPException(status_code=400, detail="The same device was selected more than once")
+
+    center_scoped = is_center_scoped_operator(current_user, db)
+    return_center_id = payload.center_id or current_user.center_id
+    if center_scoped and return_center_id != current_user.center_id:
+        raise HTTPException(status_code=403, detail="Devices can only be received at your center")
+    if not return_center_id or not db.get(Center, return_center_id):
+        raise HTTPException(status_code=400, detail="Choose the center receiving the devices")
+
+    lines = db.query(LeaseItem).filter(LeaseItem.lease_request_id == lease.id).with_for_update().all()
+    open_line_by_asset = {line.asset_id: line for line in lines if line.asset_id and line.returned_at is None}
+    checklist = [entry.strip() for entry in payload.checklist if entry.strip()]
+    notes = (payload.notes or "").strip() or None
+    condition_text = describe_return_condition(payload.condition, checklist, notes)
+    returned_at = datetime.now(UTC).replace(tzinfo=None)
+    returned: list[dict] = []
+    for item in payload.items:
+        line = open_line_by_asset.get(item.asset_id)
+        asset = db.get(Asset, item.asset_id) if line else None
+        if not line or not asset:
+            raise HTTPException(status_code=400, detail="A selected device is not out on this request")
+        if item.serial_number.strip().upper() != asset.serial_number.upper():
+            raise HTTPException(status_code=400, detail=f"The serial entered does not match device {asset.serial_number}")
+        if center_scoped and (asset.home_center_id or asset.center_id) != current_user.center_id:
+            raise HTTPException(status_code=403, detail=f"Device {asset.serial_number} does not belong to your center")
+        line.returned_at = returned_at
+        line.returned_to = current_user.id
+        line.return_center_id = return_center_id
+        line.condition_on_return = condition_text
+        asset.status = asset_status
+        asset.center_id = return_center_id
+        if asset_status == "repair":
+            repair_note = f"{returned_at:%Y-%m-%d} returned on token {lease.token_number}: {condition_text}"
+            asset.notes = f"{asset.notes}\n{repair_note}" if asset.notes else repair_note
+        returned.append({"asset_id": asset.id, "serial_number": asset.serial_number, "status": asset_status_to_api(asset.status)})
+
+    previous_status = lease.status
+    still_out = settle_lease_after_return(db, lease, lines)
+    write_audit_log(
+        db,
+        request,
+        action="devices_returned",
+        entity_type="lease_request",
+        entity_id=lease.id,
+        center_id=return_center_id,
+        old_value={"status": previous_status, "token": lease.token_number},
+        new_value={
+            "status": lease.status,
+            "token": lease.token_number,
+            "devices": returned,
+            "condition": payload.condition,
+            "checklist": checklist,
+            "notes": notes,
+            "still_out": still_out,
+        },
+        current_user=current_user,
+    )
+    db.commit()
+    return {
+        "lease_id": lease.id,
+        "status": lease_status_to_api(lease.status),
+        "returned": returned,
+        "still_out": still_out,
+    }

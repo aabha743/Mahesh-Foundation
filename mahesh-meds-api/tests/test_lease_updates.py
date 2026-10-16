@@ -2,7 +2,7 @@ import unittest
 from types import SimpleNamespace
 
 import lease_test_support as support
-from app.main import required_lease_permission
+from app.permissions import required_lease_permission
 from app.models import Asset
 from app.schemas import LeaseRequestUpdate
 

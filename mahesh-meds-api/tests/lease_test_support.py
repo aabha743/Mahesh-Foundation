@@ -7,7 +7,9 @@ from datetime import datetime, UTC
 from fastapi.testclient import TestClient
 
 from app.database import SessionLocal
-from app.main import app, create_access_token, invalidate_permission_cache
+from app.main import app
+from app.permissions import invalidate_permission_cache
+from app.security import create_access_token
 from app.models import Asset, AuditLog, Center, LeaseItem, LeaseRequest, NotificationLog, Role, SKU, SKUBlock, User
 
 CSRF = "test-csrf-token"
