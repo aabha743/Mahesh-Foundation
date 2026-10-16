@@ -10,8 +10,9 @@ from app.models import SMSTemplate
 
 logger = logging.getLogger(__name__)
 
-SMS_API_KEY = os.getenv("SMS_API_KEY", "a620ec90-84b6-4bc5-b28d-21303df51b49")
-SMS_USERNAME = os.getenv("SMS_USERNAME", "oz07-hostello")
+# Provider credentials come only from the environment (.env); there are no fallbacks.
+SMS_API_KEY = os.getenv("SMS_API_KEY", "")
+SMS_USERNAME = os.getenv("SMS_USERNAME", "")
 SMS_SENDER = os.getenv("SMS_SENDER", "MHSFND")
 SMS_BASE_URL = os.getenv("SMS_BASE_URL", "http://www.bulksmsapps.com/api/apismsv2.aspx")
 SMS_PEID = os.getenv("SMS_PEID", "")
@@ -317,6 +318,18 @@ def send_sms(
             reference_id=reference_id,
             status="failed",
             error_message="Missing DLT template ID",
+            db=db,
+        )
+        return False
+
+    if not SMS_API_KEY or not SMS_USERNAME:
+        log_sms_attempt(
+            recipient_mobile=formatted_mobile,
+            message=message,
+            sms_type=sms_type,
+            reference_id=reference_id,
+            status="failed",
+            error_message="SMS_API_KEY / SMS_USERNAME not configured",
             db=db,
         )
         return False

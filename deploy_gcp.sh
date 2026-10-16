@@ -6,6 +6,19 @@
 
 set -e
 
+# No secrets live in this file. On a fresh install, provide them as environment
+# variables or in an untracked deploy.env next to this script (see deploy.env.example):
+#   SMS_API_KEY, SMS_USERNAME, SMS_PEID          BulkSMS / DLT; SMS stays off without them
+#   BOOTSTRAP_ADMIN_MOBILE, BOOTSTRAP_ADMIN_NAME  first master admin (optional)
+# The database password is generated on first install and kept only in the API's .env.
+PROJECT_ROOT="$(pwd)"
+if [ -f "${PROJECT_ROOT}/deploy.env" ]; then
+    set -a
+    . "${PROJECT_ROOT}/deploy.env"
+    set +a
+fi
+API_ENV=/var/www/mahesh-meds-api/.env
+
 echo "=== Step 1: Setting up 2GB Swap space ==="
 if [ ! -f /swapfile ]; then
     sudo fallocate -l 2G /swapfile || sudo dd if=/dev/zero of=/swapfile bs=1M count=2048
@@ -26,14 +39,21 @@ echo "=== Step 3: Setting up MariaDB Database ==="
 sudo systemctl enable mariadb
 sudo systemctl start mariadb
 
-DB_PASS="MaheshAppPass2026!"
+if sudo test -f "$API_ENV"; then
+    # Existing install: keep using the password the API is already configured with.
+    DB_PASS="$(sudo sed -n 's#^DATABASE_URL=mysql+pymysql://mahesh_app:\([^@]*\)@.*#\1#p' "$API_ENV")"
+    if [ -z "$DB_PASS" ]; then
+        echo "ERROR: could not read the database password from $API_ENV" >&2
+        exit 1
+    fi
+else
+    DB_PASS="$(python3 -c 'import secrets; print(secrets.token_urlsafe(24))')"
+fi
 
 sudo mysql -e "CREATE DATABASE IF NOT EXISTS mahesh_meds CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
 sudo mysql -e "CREATE USER IF NOT EXISTS 'mahesh_app'@'localhost' IDENTIFIED BY '${DB_PASS}';"
 sudo mysql -e "GRANT ALL PRIVILEGES ON mahesh_meds.* TO 'mahesh_app'@'localhost';"
 sudo mysql -e "FLUSH PRIVILEGES;"
-
-PROJECT_ROOT="$(pwd)"
 
 if [ -f /var/www/mahesh-meds-api/db/schema.sql ]; then
     echo "Importing schema into mahesh_meds..."
@@ -58,41 +78,47 @@ sudo .venv/bin/pip install -r requirements.txt -r requirements.dev.txt
 
 JWT_SECRET=$(python3 -c "import secrets; print(secrets.token_hex(32))")
 
-if [ ! -f /var/www/mahesh-meds-api/.env ]; then
-    echo "Creating initial /var/www/mahesh-meds-api/.env file..."
-    sudo cat <<EOF | sudo tee /var/www/mahesh-meds-api/.env
+if [ -n "${SMS_API_KEY:-}" ] && [ -n "${SMS_USERNAME:-}" ] && [ -n "${SMS_PEID:-}" ]; then
+    SMS_ENABLED=true
+else
+    SMS_ENABLED=false
+fi
+
+if ! sudo test -f "$API_ENV"; then
+    echo "Creating initial $API_ENV file..."
+    [ "$SMS_ENABLED" = true ] || echo "WARNING: SMS_API_KEY / SMS_USERNAME / SMS_PEID not provided; SMS is disabled until they are added to $API_ENV."
+    {
+        cat <<EOF
 DATABASE_URL=mysql+pymysql://mahesh_app:${DB_PASS}@127.0.0.1:3306/mahesh_meds
 DEBUG=false
 COOKIE_SECURE=true
 COOKIE_SAMESITE=lax
 PICKUP_WINDOW_HOURS=72
-SMS_ENABLED=true
-SMS_PEID=1201159102043751902
-SMS_API_KEY=a620ec90-84b6-4bc5-b28d-21303df51b49
-SMS_USERNAME=oz07-hostello
+SMS_ENABLED=${SMS_ENABLED}
+SMS_PEID=${SMS_PEID:-}
+SMS_API_KEY=${SMS_API_KEY:-}
+SMS_USERNAME=${SMS_USERNAME:-}
 SMS_SENDER=MHSFND
 SMS_BASE_URL=http://www.bulksmsapps.com/api/apismsv2.aspx
 SMS_TIMEOUT_SECONDS=10
 JWT_SECRET=${JWT_SECRET}
-BOOTSTRAP_ADMIN_MOBILE=7815972631
-BOOTSTRAP_ADMIN_NAME=Abha
 CORS_ORIGINS=http://35.222.32.191,https://maheshfoundation-medical.com,https://www.maheshfoundation-medical.com
 EOF
+        if [ -n "${BOOTSTRAP_ADMIN_MOBILE:-}" ]; then
+            echo "BOOTSTRAP_ADMIN_MOBILE=${BOOTSTRAP_ADMIN_MOBILE}"
+            echo "BOOTSTRAP_ADMIN_NAME=${BOOTSTRAP_ADMIN_NAME:-System Admin}"
+        fi
+    } | sudo tee "$API_ENV" >/dev/null
 else
-    echo "Existing .env found at /var/www/mahesh-meds-api/.env. Preserving custom values and ensuring production settings..."
-    sudo sed -i 's/^SMS_ENABLED=.*/SMS_ENABLED=true/' /var/www/mahesh-meds-api/.env
-    sudo sed -i 's/^COOKIE_SECURE=.*/COOKIE_SECURE=true/' /var/www/mahesh-meds-api/.env
-    if ! grep -q "SMS_PEID" /var/www/mahesh-meds-api/.env; then
-        sudo cat <<EOF | sudo tee -a /var/www/mahesh-meds-api/.env
-SMS_PEID=1201159102043751902
-SMS_API_KEY=a620ec90-84b6-4bc5-b28d-21303df51b49
-SMS_USERNAME=oz07-hostello
-SMS_SENDER=MHSFND
-SMS_BASE_URL=http://www.bulksmsapps.com/api/apismsv2.aspx
-SMS_TIMEOUT_SECONDS=10
-EOF
+    echo "Existing $API_ENV found. Keeping its values and ensuring production settings..."
+    sudo sed -i 's/^COOKIE_SECURE=.*/COOKIE_SECURE=true/' "$API_ENV"
+    if ! sudo grep -q '^SMS_API_KEY=.' "$API_ENV" && [ "$SMS_ENABLED" = true ]; then
+        sudo sed -i '/^SMS_\(ENABLED\|PEID\|API_KEY\|USERNAME\)=/d' "$API_ENV"
+        printf 'SMS_ENABLED=true\nSMS_PEID=%s\nSMS_API_KEY=%s\nSMS_USERNAME=%s\n' "$SMS_PEID" "$SMS_API_KEY" "$SMS_USERNAME" | sudo tee -a "$API_ENV" >/dev/null
     fi
 fi
+sudo chown www-data:www-data "$API_ENV"
+sudo chmod 600 "$API_ENV"
 
 echo "=== Setting up Automated Daily Database Backups ==="
 # Nightly dump at 02:00 IST, uploaded to gs://mf-medical-equipment-seva-db-backups.
