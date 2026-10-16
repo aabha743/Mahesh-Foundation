@@ -1,13 +1,10 @@
 import unittest
-from datetime import datetime, UTC, timedelta
 from app.services.sms import (
     format_mobile,
     render_template,
     get_template,
-    SMS_TEMPLATE_SEEDS,
 )
 from app.database import SessionLocal
-from app.models import SMSTemplate, LeaseRequest, SKU, Center, LeaseItem
 
 class SMSAndTemplateVerificationTests(unittest.TestCase):
 

@@ -56,7 +56,7 @@ from app.schemas import ( # Importing the schemas from the schemas.py file
     UserUpdate,
 )
 from app.scheduler import start_scheduler, stop_scheduler
-from app.services.sms import SMS_ENABLED, send_template_sms
+from app.services.sms import send_template_sms
 
 # -----------------------------------------------------------------------------
 # API route map (backend endpoint -> frontend usage)
@@ -1100,13 +1100,7 @@ def write_audit_log(
     )
 
 
-# --- Health and audit feed APIs ---
-@app.get("/health")
-def health_check():
-    """Simple health probe used by deployments/monitoring."""
-    return {"status": "ok"}
-
-
+# --- Audit feed APIs ---
 @app.get("/api/v1/audit-logs")
 def list_audit_logs(
     section: str | None = Query(default=None),

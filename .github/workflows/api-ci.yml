@@ -1,0 +1,79 @@
+name: API CI
+
+on:
+  pull_request:
+    branches: [master]
+    paths:
+      - "mahesh-meds-api/**"
+      - ".github/workflows/api-ci.yml"
+  push:
+    branches: [master]
+    paths:
+      - "mahesh-meds-api/**"
+      - ".github/workflows/api-ci.yml"
+
+# A new push to the same PR or branch cancels the run it replaces (saves Actions minutes).
+concurrency:
+  group: api-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Lint and test API
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: mahesh-meds-api
+    services:
+      # Same MariaDB version as production; a throwaway database that exists only for this job.
+      mariadb:
+        image: mariadb:11.8
+        env:
+          MARIADB_ROOT_PASSWORD: ci-root
+          MARIADB_DATABASE: mahesh_meds_test
+          MARIADB_USER: ci
+          MARIADB_PASSWORD: ci
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="healthcheck.sh --connect --innodb_initialized"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+    env:
+      DATABASE_URL: mysql+pymysql://ci:ci@127.0.0.1:3306/mahesh_meds_test
+      DEBUG: "true"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: |
+            mahesh-meds-api/requirements.txt
+            mahesh-meds-api/requirements.dev.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt -r requirements.dev.txt
+
+      - name: Lint (ruff)
+        run: ruff check app tests
+
+      - name: Load schema into the test database
+        run: |
+          sed -E '/^CREATE DATABASE/,/;/d; /^USE /d' db/schema.sql \
+            | docker exec -i ${{ job.services.mariadb.id }} mariadb -uroot -pci-root mahesh_meds_test
+          # The stock-blocking tests expect at least one center and SKU to exist.
+          docker exec ${{ job.services.mariadb.id }} mariadb -uroot -pci-root mahesh_meds_test -e \
+            "INSERT INTO centers (id, name, city) VALUES (UUID(), 'CI Fixture Center', 'Test');
+             INSERT INTO skus (id, name, sku_code) VALUES (UUID(), 'CI Fixture Device', 'CI-FIXTURE-1');"
+
+      - name: Run tests
+        run: |
+          export JWT_SECRET="$(python -c 'import secrets; print(secrets.token_hex(32))')"
+          python -m pytest -q

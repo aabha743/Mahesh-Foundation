@@ -92,7 +92,7 @@ export default function CenterLeaseRequests() {
         if (cancelled) return;
 
         const nextRows = requests
-          .map((request) => {
+          .map((request): Row | null => {
             const localStatus = resolveLocalStatus(request, centerId, assets);
             if (!localStatus) return null;
             return {
@@ -105,7 +105,7 @@ export default function CenterLeaseRequests() {
               status: formatLeaseStatus(request.status) as LeaseStatus,
               submittedDate: request.created_at.slice(0, 10),
               localStatus,
-            } satisfies Row;
+            };
           })
           .filter((row): row is Row => row !== null);
 

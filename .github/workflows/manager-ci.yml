@@ -1,0 +1,54 @@
+name: Manager CI
+
+on:
+  pull_request:
+    branches: [master]
+    paths:
+      - "mahesh-meds-manager/**"
+      - ".github/workflows/manager-ci.yml"
+  push:
+    branches: [master]
+    paths:
+      - "mahesh-meds-manager/**"
+      - ".github/workflows/manager-ci.yml"
+
+# A new push to the same PR or branch cancels the run it replaces (saves Actions minutes).
+concurrency:
+  group: manager-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Lint, type check, test and build manager
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: mahesh-meds-manager
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: mahesh-meds-manager/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      # vite build does not type-check, so this is the only place type errors are caught.
+      - name: Type check
+        run: npm run typecheck
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Build
+        run: npm run build

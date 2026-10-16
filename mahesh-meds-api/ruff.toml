@@ -1,0 +1,7 @@
+# Lint rules enforced in CI. This starts with problems that mean broken or dead code
+# (syntax errors, undefined names, unused imports, redefinitions); widen it as the
+# codebase is cleaned up. `== True` in SQLAlchemy filters is intentional, so E712 is off.
+target-version = "py313"
+
+[lint]
+select = ["E9", "F63", "F7", "F82", "F401", "F811"]

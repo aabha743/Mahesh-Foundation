@@ -35,6 +35,10 @@ type TokenLeaseDetail = {
   id: string;
   token_number: string;
   requestor_name: string;
+  patient_name?: string | null;
+  reference_name?: string | null;
+  delivery_address?: string | null;
+  delivery_landmark?: string | null;
   mobile: string;
   preferred_center_id: string | null;
   fulfillment_centers?: Array<{ center_id: string; center_name: string; item_count: number; item_names: string[] }>;
