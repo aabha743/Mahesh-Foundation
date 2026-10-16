@@ -204,6 +204,7 @@ class LeaseRequestItemOut(BaseModel):
     quantity_requested: int
     asset_id: str | None = None
     due_date: date | None = None
+    returned_at: datetime | None = None
 
 
 class LeaseFulfillmentCenterOut(BaseModel):
@@ -262,6 +263,32 @@ class LeaseRequestUpdate(BaseModel):
     rejection_reason: str | None = None
     approval_comments: str | None = None
     items: list[LeaseRequestItemCreate] | None = None
+
+
+class LeaseReturnItem(BaseModel):
+    asset_id: str
+    serial_number: str = Field(min_length=1, max_length=100)
+
+
+class LeaseReturnCreate(BaseModel):
+    items: list[LeaseReturnItem] = Field(min_length=1, max_length=50)
+    condition: str
+    checklist: list[Annotated[str, Field(max_length=100)]] = Field(default_factory=list, max_length=20)
+    notes: str | None = Field(default=None, max_length=2000)
+    center_id: str | None = None
+
+
+class LeaseReturnedDeviceOut(BaseModel):
+    asset_id: str
+    serial_number: str
+    status: str
+
+
+class LeaseReturnOut(BaseModel):
+    lease_id: str
+    status: str
+    returned: list[LeaseReturnedDeviceOut]
+    still_out: int
 
 
 # --- Lease extensions ---

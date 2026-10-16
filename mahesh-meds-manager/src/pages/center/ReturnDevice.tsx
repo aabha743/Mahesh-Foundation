@@ -10,13 +10,13 @@ import { Textarea } from "@/components/ui/textarea";
 import { Progress } from "@/components/ui/progress";
 import { useCenterScope } from "@/hooks/useCenterScope";
 import { apiFetch } from "@/lib/api";
-import { uiAssetStatusToDb } from "@/lib/assetStatus";
-import type { AssetStatus } from "@/lib/uiTypes";
 import { toast } from "sonner";
 import { SerialNumberInput } from "@/components/SerialNumberInput";
 
 const steps = ["Find Request", "Return Condition"];
 const conditions = ["Good", "Minor Damage", "Major Damage", "Needs Repair"];
+// Devices returned in these conditions go under repair instead of back into stock (decided by the server).
+const repairConditions = new Set(["Major Damage", "Needs Repair"]);
 const checklist = ["Device is functional", "All accessories returned", "No physical damage", "Device cleaned/sanitized"];
 
 type AssetRow = {
@@ -28,6 +28,14 @@ type AssetRow = {
   status: string;
 };
 
+type LeaseItemRow = {
+  sku_id: string;
+  sku_name: string;
+  quantity_requested: number;
+  asset_id?: string | null;
+  returned_at?: string | null;
+};
+
 type LeaseRequestRow = {
   id: string;
   token_number: string;
@@ -35,8 +43,24 @@ type LeaseRequestRow = {
   preferred_center_id: string | null;
   status: string;
   skus: string[];
-  items?: Array<{ sku_id: string; sku_name: string; quantity_requested: number; asset_id?: string | null }>;
+  items?: LeaseItemRow[];
 };
+
+type ReturnResult = {
+  lease_id: string;
+  status: string;
+  returned: Array<{ asset_id: string; serial_number: string; status: string }>;
+  still_out: number;
+};
+
+/** True when the line's device is still out and belongs to this center. */
+function isOutFromCenter(item: LeaseItemRow, assetsById: Record<string, AssetRow>, centerId: string | null) {
+  if (!item.asset_id || item.returned_at) return false;
+  const asset = assetsById[item.asset_id];
+  if (!asset || asset.status !== "leased") return false;
+  const assetLeaseCenterId = asset.home_center_id ?? asset.center_id;
+  return !!assetLeaseCenterId && assetLeaseCenterId === centerId;
+}
 
 export default function ReturnDevice() {
   const { centerId } = useCenterScope();
@@ -51,6 +75,7 @@ export default function ReturnDevice() {
   const [condition, setCondition] = useState("");
   const [notes, setNotes] = useState("");
   const [completed, setCompleted] = useState(false);
+  const [returnResult, setReturnResult] = useState<ReturnResult | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
   const returnableItems = useMemo(() => {
@@ -58,13 +83,7 @@ export default function ReturnDevice() {
     const items = lease.items ?? [];
     return items
       .map((item, idx) => ({ ...item, key: `${item.sku_id}-${idx}` }))
-      .filter((item) => {
-        if (!item.asset_id) return false;
-        const asset = assetsById[item.asset_id];
-        if (!asset || asset.status !== "leased") return false;
-        const assetLeaseCenterId = asset.home_center_id ?? asset.center_id;
-        return !!assetLeaseCenterId && assetLeaseCenterId === centerId;
-      });
+      .filter((item) => isOutFromCenter(item, assetsById, centerId));
   }, [lease, assetsById, centerId]);
 
   const handleFind = async () => {
@@ -76,13 +95,7 @@ export default function ReturnDevice() {
         apiFetch<AssetRow[]>("/api/v1/assets"),
       ]);
       const nextAssetsById = Object.fromEntries(assets.map((a) => [a.id, a]));
-      const itemsAtThisCenter = (leaseByToken.items ?? []).some((item) => {
-        if (!item.asset_id) return false;
-        const asset = nextAssetsById[item.asset_id];
-        if (!asset || asset.status !== "leased") return false;
-        const assetLeaseCenterId = asset.home_center_id ?? asset.center_id;
-        return !!assetLeaseCenterId && assetLeaseCenterId === centerId;
-      });
+      const itemsAtThisCenter = (leaseByToken.items ?? []).some((item) => isOutFromCenter(item, nextAssetsById, centerId));
       if (!itemsAtThisCenter) {
         setError("No issued items from this center were found for this token.");
         setLease(null);
@@ -105,78 +118,40 @@ export default function ReturnDevice() {
 
   const handleComplete = async () => {
     if (!lease) return;
-    const nextStatus: AssetStatus = condition === "Needs Repair" ? "Under Repair" : "Available";
+    const selected = returnableItems.filter((item) => selectedItemKeys[item.key]);
+    if (!selected.length) {
+      toast.error("Select at least one item to return");
+      return;
+    }
+    const mismatch = selected.find((item) => {
+      const asset = item.asset_id ? assetsById[item.asset_id] : undefined;
+      return !asset || (confirmSerialByKey[item.key] ?? "").trim().toUpperCase() !== asset.serial_number.toUpperCase();
+    });
+    if (mismatch) {
+      toast.error(`Serial mismatch for ${mismatch.sku_name}`);
+      return;
+    }
     setSubmitting(true);
     try {
-      const selected = returnableItems.filter((item) => selectedItemKeys[item.key]);
-      if (!selected.length) {
-        toast.error("Select at least one item to return");
-        setSubmitting(false);
-        return;
-      }
-      for (const item of selected) {
-        if (!item.asset_id) continue;
-        const asset = assetsById[item.asset_id];
-        if (!asset) continue;
-        const scanned = (confirmSerialByKey[item.key] ?? "").trim().toUpperCase();
-        if (scanned !== asset.serial_number.toUpperCase()) {
-          throw new Error(`Serial mismatch for ${item.sku_name}`);
-        }
-        await apiFetch(`/api/v1/assets/${asset.id}`, {
-          method: "PATCH",
-          body: JSON.stringify({
-            status: uiAssetStatusToDb(nextStatus),
-            center_id: centerId,
-            notes: notes || null,
-          }),
-        });
-      }
-
-      // Get fresh asset data after updates
-      const refreshedAssets = await apiFetch<AssetRow[]>("/api/v1/assets");
-      const refreshedMap = Object.fromEntries(refreshedAssets.map((a) => [a.id, a]));
-      setAssetsById(refreshedMap);
-
-      // Check which items were successfully returned vs still leased
-      const successfullyReturned = selected.filter(item => {
-        if (!item.asset_id) return false;
-        const asset = refreshedMap[item.asset_id];
-        return asset && asset.status !== "leased";
+      // One request: the server records every device, updates stock and settles the request together.
+      const result = await apiFetch<ReturnResult>(`/api/v1/lease-requests/${lease.id}/returns`, {
+        method: "POST",
+        body: JSON.stringify({
+          center_id: centerId,
+          condition,
+          checklist: checklist.filter((_, i) => checks[i]),
+          notes: notes.trim() || null,
+          items: selected.map((item) => ({
+            asset_id: item.asset_id,
+            serial_number: (confirmSerialByKey[item.key] ?? "").trim(),
+          })),
+        }),
       });
-
-      const stillLeasedItems = (lease.items ?? []).filter(item => {
-        if (!item.asset_id) return false;
-        // Check if this item was NOT in the successfully returned list
-        const wasReturned = successfullyReturned.some(returned => 
-          returned.sku_id === item.sku_id && returned.asset_id === item.asset_id
-        );
-        const asset = refreshedMap[item.asset_id];
-        return !wasReturned && asset && asset.status === "leased";
-      });
-
-      // Only update lease status if we have a clear state
-      if (stillLeasedItems.length === 0 && successfullyReturned.length > 0) {
-        // All items returned successfully
-        await apiFetch(`/api/v1/lease-requests/${lease.id}`, {
-          method: "PATCH",
-          body: JSON.stringify({ status: "closed" }),
-        });
-      } else if (successfullyReturned.length > 0) {
-        // Partial return - keep active
-        await apiFetch(`/api/v1/lease-requests/${lease.id}`, {
-          method: "PATCH",
-          body: JSON.stringify({ 
-            status: "active",
-            notes: `Partial return: ${successfullyReturned.length} items returned, ${stillLeasedItems.length} still leased`
-          }),
-        });
-      }
-      // If no items were successfully returned, don't change lease status
-
+      setReturnResult(result);
       setCompleted(true);
       toast.success("Return recorded");
-    } catch {
-      toast.error("Failed to complete token return");
+    } catch (error) {
+      toast.error(error instanceof Error && error.message ? error.message : "Failed to complete token return");
     } finally {
       setSubmitting(false);
     }
@@ -280,7 +255,7 @@ export default function ReturnDevice() {
                 ))}
               </SelectContent>
             </Select>
-            {condition === "Needs Repair" && <p className="text-xs text-warning">Asset will be marked as Under Repair</p>}
+            {repairConditions.has(condition) && <p className="text-xs text-warning">Asset will be marked as Under Repair</p>}
             <div className="space-y-2">
               <p className="text-sm font-medium">Confirm serials for selected items</p>
               {returnableItems.filter((item) => selectedItemKeys[item.key]).map((item) => (
@@ -333,8 +308,17 @@ export default function ReturnDevice() {
                 <span className="text-muted-foreground">Condition:</span> {condition}
               </p>
               <p>
-                <span className="text-muted-foreground">New Status:</span> {condition === "Needs Repair" ? "Under Repair" : "Available"}
+                <span className="text-muted-foreground">New Status:</span>{" "}
+                {repairConditions.has(condition) ? "Under Repair" : "Available"}
               </p>
+              {returnResult && (
+                <p>
+                  <span className="text-muted-foreground">Request:</span>{" "}
+                  {returnResult.still_out > 0
+                    ? `${returnResult.still_out} device${returnResult.still_out === 1 ? "" : "s"} still out`
+                    : "All devices returned, request closed"}
+                </p>
+              )}
             </div>
             <Button
               onClick={() => {
@@ -348,6 +332,7 @@ export default function ReturnDevice() {
                 setCondition("");
                 setNotes("");
                 setCompleted(false);
+                setReturnResult(null);
               }}
             >
               Return Another

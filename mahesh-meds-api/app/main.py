@@ -48,6 +48,8 @@ from app.schemas import ( # Importing the schemas from the schemas.py file
     PublicLeaseRequestOut,
     LeaseRequestOut,
     LeaseRequestUpdate,
+    LeaseReturnCreate,
+    LeaseReturnOut,
     SKUCreate,
     SKUOut,
     SKUUpdate,
@@ -836,6 +838,53 @@ def lease_devices(db: Session, lease: LeaseRequest, lines: list[dict], current_u
         assets.append(asset)
     for asset in assets:
         asset.status = "leased"
+
+
+# What a returned device becomes for each condition offered on the return screen.
+RETURN_CONDITION_ASSET_STATUS = {
+    "Good": "available",
+    "Minor Damage": "available",
+    "Major Damage": "repair",
+    "Needs Repair": "repair",
+}
+# Requests that can have devices out: issued, partly returned, or approved with only some lines issued.
+RETURNABLE_LEASE_DB_STATUSES = {"approved", "issued", "partially_returned"}
+
+
+def settle_lease_after_return(db: Session, lease: LeaseRequest, lines: list[LeaseItem]) -> int:
+    """Set a request's status and due date after devices come back, and return how many are still out.
+
+    `lines` must be all of the request's lines, with this return already recorded on them.
+    The request's notes are never touched.
+    """
+    still_out = [line for line in lines if line.asset_id and line.returned_at is None]
+    if still_out:
+        # A partly issued request stays approved so its remaining lines can still be issued.
+        if lease.status != "approved":
+            lease.status = "partially_returned"
+        due_dates = [line.due_date for line in still_out if line.due_date]
+        if due_dates:
+            lease.due_date = max(due_dates)
+        return len(still_out)
+    lease.status = "returned"
+    db.query(SKUBlock).filter(
+        SKUBlock.lease_request_id == lease.id,
+        SKUBlock.status == "blocked"
+    ).update({
+        "status": "released",
+        "release_reason": "approved_collected",
+        "release_at": datetime.now(UTC).replace(tzinfo=None)
+    }, synchronize_session=False)
+    return 0
+
+
+def describe_return_condition(condition: str, checklist: list[str], notes: str | None) -> str:
+    parts = [condition]
+    if checklist:
+        parts.append("Checked: " + ", ".join(checklist))
+    if notes:
+        parts.append("Notes: " + notes)
+    return "; ".join(parts)
 
 
 def parse_extension_duration_days(requested_duration: str) -> int | None:
@@ -1732,6 +1781,7 @@ def update_asset(
         raise HTTPException(status_code=400, detail="Invalid center_id")
     
     # Record return details in lease_items if asset was leased and is now being returned
+    returned_line = None
     if asset.status == "leased" and data.get("status") in {"available", "repair"}:
         lease_item = db.query(LeaseItem).filter(
             LeaseItem.asset_id == asset.id,
@@ -1742,9 +1792,17 @@ def update_asset(
             lease_item.returned_to = current_user.id
             lease_item.return_center_id = target_center_id or current_user.center_id
             lease_item.condition_on_return = data.get("notes")
+            returned_line = lease_item
 
     for key, value in data.items():
         setattr(asset, key, value)
+    if returned_line:
+        # Returns now go through POST /lease-requests/{id}/returns; this keeps the request in step
+        # when a device is taken back here instead (asset screens, or a return screen opened before the change).
+        lease = db.get(LeaseRequest, returned_line.lease_request_id)
+        if lease and lease.status in RETURNABLE_LEASE_DB_STATUSES:
+            lines = db.query(LeaseItem).filter(LeaseItem.lease_request_id == lease.id).all()
+            settle_lease_after_return(db, lease, lines)
     db.commit()
     db.refresh(asset)
     write_audit_log(
@@ -2013,11 +2071,12 @@ def build_public_lease_lookup_result(db: Session, req: LeaseRequest) -> dict:
             LeaseItem.quantity_requested,
             LeaseItem.asset_id,
             LeaseItem.due_date,
+            LeaseItem.returned_at,
         )
         .join(SKU, SKU.id == LeaseItem.sku_id)
         .where(LeaseItem.lease_request_id == req.id)
     ).all()
-    skus = [name for _, _, name, _, _, _ in sku_rows]
+    skus = [name for _, _, name, _, _, _, _ in sku_rows]
     items = [
         {
             "sku_id": sku_id,
@@ -2025,8 +2084,9 @@ def build_public_lease_lookup_result(db: Session, req: LeaseRequest) -> dict:
             "quantity_requested": quantity_requested,
             "asset_id": asset_id,
             "due_date": due_date,
+            "returned_at": returned_at,
         }
-        for _, sku_id, name, quantity_requested, asset_id, due_date in sku_rows
+        for _, sku_id, name, quantity_requested, asset_id, due_date, returned_at in sku_rows
     ]
     extension_eligible, extension_reason, pending_extension_request = evaluate_extension_eligibility(db, req)
     fulfillment_centers, fulfillment_message = fulfillment_plan_for(db, req)
@@ -2411,6 +2471,7 @@ def list_lease_requests(
             LeaseItem.quantity_requested,
             LeaseItem.asset_id,
             LeaseItem.due_date,
+            LeaseItem.returned_at,
         )
         .join(SKU, SKU.id == LeaseItem.sku_id)
         .where(LeaseItem.lease_request_id.in_(request_ids))
@@ -2418,7 +2479,7 @@ def list_lease_requests(
 
     sku_map: dict[str, list[str]] = {}
     item_map: dict[str, list[dict[str, str | int]]] = {}
-    for lease_request_id, sku_id, sku_name, quantity_requested, asset_id, due_date in sku_rows:
+    for lease_request_id, sku_id, sku_name, quantity_requested, asset_id, due_date, returned_at in sku_rows:
         sku_map.setdefault(lease_request_id, []).append(sku_name)
         item_map.setdefault(lease_request_id, []).append(
             {
@@ -2427,6 +2488,7 @@ def list_lease_requests(
                 "quantity_requested": quantity_requested,
                 "asset_id": asset_id,
                 "due_date": due_date,
+                "returned_at": returned_at,
             }
         )
 
@@ -2599,6 +2661,12 @@ def update_lease_request(
             lease_devices(db, lease, newly_issued, current_user)
     if "status" in data and data["status"] is not None:
         data["status"] = lease_status_to_db(data["status"])
+        # "active" also covers a partly returned request; don't turn it back into a fully issued one.
+        if data["status"] == "issued" and previous_status == "partially_returned":
+            data["status"] = "partially_returned"
+    if payload.status == "active" and payload.notes and payload.notes.startswith("Partial return:") and lease.notes:
+        # Return screens from before POST /returns send a partial-return summary as the notes: add it, don't replace.
+        data["notes"] = f"{lease.notes}\n{payload.notes}"
     for key, value in data.items():
         setattr(lease, key, value)
     if items_payload is not None:
@@ -2775,6 +2843,93 @@ def update_lease_request(
     return {
         **LeaseRequestOut.model_validate(lease).model_dump(),
         "status": lease_status_to_api(lease.status),
+    }
+
+
+@app.post("/api/v1/lease-requests/{lease_id}/returns", response_model=LeaseReturnOut)
+def return_lease_devices(
+    lease_id: str,
+    payload: LeaseReturnCreate,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("devices.collect")),
+    _: None = Depends(validate_csrf),
+):
+    """Takes back devices issued on a request in one transaction: records each return on its line, puts the
+    devices back in stock (or under repair), and sets the request to partly returned or returned."""
+    lease = db.query(LeaseRequest).filter(LeaseRequest.id == lease_id).with_for_update().first()
+    if not lease:
+        raise HTTPException(status_code=404, detail="Lease request not found")
+    asset_status = RETURN_CONDITION_ASSET_STATUS.get(payload.condition)
+    if asset_status is None:
+        raise HTTPException(status_code=400, detail="Choose the condition of the returned devices")
+    if lease.status not in RETURNABLE_LEASE_DB_STATUSES:
+        raise HTTPException(status_code=400, detail="This request has no devices out")
+    asset_ids = [item.asset_id for item in payload.items]
+    if len(set(asset_ids)) != len(asset_ids):
+        raise HTTPException(status_code=400, detail="The same device was selected more than once")
+
+    center_scoped = is_center_scoped_operator(current_user, db)
+    return_center_id = payload.center_id or current_user.center_id
+    if center_scoped and return_center_id != current_user.center_id:
+        raise HTTPException(status_code=403, detail="Devices can only be received at your center")
+    if not return_center_id or not db.get(Center, return_center_id):
+        raise HTTPException(status_code=400, detail="Choose the center receiving the devices")
+
+    lines = db.query(LeaseItem).filter(LeaseItem.lease_request_id == lease.id).with_for_update().all()
+    open_line_by_asset = {line.asset_id: line for line in lines if line.asset_id and line.returned_at is None}
+    checklist = [entry.strip() for entry in payload.checklist if entry.strip()]
+    notes = (payload.notes or "").strip() or None
+    condition_text = describe_return_condition(payload.condition, checklist, notes)
+    returned_at = datetime.now(UTC).replace(tzinfo=None)
+    returned: list[dict] = []
+    for item in payload.items:
+        line = open_line_by_asset.get(item.asset_id)
+        asset = db.get(Asset, item.asset_id) if line else None
+        if not line or not asset:
+            raise HTTPException(status_code=400, detail="A selected device is not out on this request")
+        if item.serial_number.strip().upper() != asset.serial_number.upper():
+            raise HTTPException(status_code=400, detail=f"The serial entered does not match device {asset.serial_number}")
+        if center_scoped and (asset.home_center_id or asset.center_id) != current_user.center_id:
+            raise HTTPException(status_code=403, detail=f"Device {asset.serial_number} does not belong to your center")
+        line.returned_at = returned_at
+        line.returned_to = current_user.id
+        line.return_center_id = return_center_id
+        line.condition_on_return = condition_text
+        asset.status = asset_status
+        asset.center_id = return_center_id
+        if asset_status == "repair":
+            repair_note = f"{returned_at:%Y-%m-%d} returned on token {lease.token_number}: {condition_text}"
+            asset.notes = f"{asset.notes}\n{repair_note}" if asset.notes else repair_note
+        returned.append({"asset_id": asset.id, "serial_number": asset.serial_number, "status": asset_status_to_api(asset.status)})
+
+    previous_status = lease.status
+    still_out = settle_lease_after_return(db, lease, lines)
+    write_audit_log(
+        db,
+        request,
+        action="devices_returned",
+        entity_type="lease_request",
+        entity_id=lease.id,
+        center_id=return_center_id,
+        old_value={"status": previous_status, "token": lease.token_number},
+        new_value={
+            "status": lease.status,
+            "token": lease.token_number,
+            "devices": returned,
+            "condition": payload.condition,
+            "checklist": checklist,
+            "notes": notes,
+            "still_out": still_out,
+        },
+        current_user=current_user,
+    )
+    db.commit()
+    return {
+        "lease_id": lease.id,
+        "status": lease_status_to_api(lease.status),
+        "returned": returned,
+        "still_out": still_out,
     }
 
 
