@@ -6,16 +6,15 @@ on:
     paths:
       - "mahesh-meds-api/**"
       - ".github/workflows/api-ci.yml"
+  # Every master commit is checked (no path filter): the deploy only ships commits whose CI passed.
   push:
     branches: [master]
-    paths:
-      - "mahesh-meds-api/**"
-      - ".github/workflows/api-ci.yml"
 
-# A new push to the same PR or branch cancels the run it replaces (saves Actions minutes).
+# A new push to the same PR cancels the run it replaces (saves Actions minutes). Each master commit gets
+# its own group, so its run is never cancelled or dropped from the queue.
 concurrency:
-  group: api-ci-${{ github.ref }}
-  cancel-in-progress: true
+  group: api-ci-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read

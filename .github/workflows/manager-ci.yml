@@ -6,16 +6,15 @@ on:
     paths:
       - "mahesh-meds-manager/**"
       - ".github/workflows/manager-ci.yml"
+  # Every master commit is built (no path filter): the deploy downloads the build for the exact commit.
   push:
     branches: [master]
-    paths:
-      - "mahesh-meds-manager/**"
-      - ".github/workflows/manager-ci.yml"
 
-# A new push to the same PR or branch cancels the run it replaces (saves Actions minutes).
+# A new push to the same PR cancels the run it replaces (saves Actions minutes). Each master commit gets
+# its own group, so its run is never cancelled or dropped from the queue.
 concurrency:
-  group: manager-ci-${{ github.ref }}
-  cancel-in-progress: true
+  group: manager-ci-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -52,3 +51,19 @@ jobs:
 
       - name: Build
         run: npm run build
+
+      - name: Record checksums of the build
+        if: github.event_name == 'push'
+        run: (cd dist && find . -type f | sort | xargs sha256sum) > dist.sha256
+
+      # What the deploy installs (ops/deploy/build-release.sh fetches it by commit).
+      - name: Upload the build
+        if: github.event_name == 'push'
+        uses: actions/upload-artifact@v4
+        with:
+          name: manager-dist
+          path: |
+            mahesh-meds-manager/dist/
+            mahesh-meds-manager/dist.sha256
+          retention-days: 90
+          if-no-files-found: error
