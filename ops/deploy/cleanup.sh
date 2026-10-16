@@ -14,7 +14,7 @@ targets=()
 for dir in "$API".prev-* "$WEB".prev-*; do
     [ -e "$dir" ] && [ "$dir" != "$API.prev-$KEEP" ] && [ "$dir" != "$WEB.prev-$KEEP" ] && targets+=("$dir")
 done
-while IFS= read -r -d '' file; do targets+=("$file"); done < <(find "$API" -name '*.prev-*' -not -path '*/.venv/*' -print0)
+while IFS= read -r -d '' file; do targets+=("$file"); done < <(find "$API" -name '*.prev-*' -not -name '.env*' -not -path '*/.venv/*' -print0)
 for file in "$API"/.env.prev-*; do [ -e "$file" ] && targets+=("$file"); done
 for item in "$DEPLOY_DIR"/release-*; do
     case "$item" in
