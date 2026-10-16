@@ -26,7 +26,7 @@ export function BrandLogo({
       {showText && (
         <div className={cn("min-w-0 text-left", textClassName)}>
           <h1 className="truncate text-sm font-bold leading-tight text-foreground">{BRAND.appName}</h1>
-          <p className="truncate text-[10px] leading-tight text-muted-foreground">
+          <p className="truncate text-xs leading-tight text-muted-foreground">
             {subtitle ?? BRAND.foundationName}
           </p>
         </div>

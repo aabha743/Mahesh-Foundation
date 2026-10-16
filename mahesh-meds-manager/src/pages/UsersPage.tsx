@@ -15,6 +15,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { toast } from "sonner";
 import { apiFetch } from "@/lib/api";
 import { useAuth } from "@/hooks/useAuth";
+import { RequiredMark } from "@/components/RequiredMark";
 
 type UserRow = {
   id: string;
@@ -193,7 +194,7 @@ export default function UsersPage() {
                     <div className="flex items-center gap-2">
                       {user.name}
                       {!user.is_active && (
-                        <Badge variant="outline" className="bg-muted text-muted-foreground border-border text-[10px] px-1.5 py-0">
+                        <Badge variant="outline" className="bg-muted text-muted-foreground border-border text-xs px-1.5 py-0">
                           Inactive
                         </Badge>
                       )}
@@ -307,10 +308,10 @@ export default function UsersPage() {
         <DialogContent className="w-full max-w-lg mx-4 md:mx-auto">
           <DialogHeader><DialogTitle>{editingUserId ? "Edit User" : "Add New User"}</DialogTitle><DialogDescription>Create or update a system user</DialogDescription></DialogHeader>
           <div className="space-y-4 mt-2">
-            <div className="space-y-2"><Label>Full Name *</Label><Input placeholder="Full name" value={form.fullName} onChange={(e) => setForm({ ...form, fullName: e.target.value })} /></div>
-            <div className="space-y-2"><Label>Mobile Number *</Label><Input placeholder="10-digit number" value={form.mobile} onChange={(e) => setForm({ ...form, mobile: e.target.value })} /></div>
+            <div className="space-y-2"><Label>Full Name<RequiredMark /></Label><Input placeholder="Full name" value={form.fullName} onChange={(e) => setForm({ ...form, fullName: e.target.value })} /></div>
+            <div className="space-y-2"><Label>Mobile Number<RequiredMark /></Label><Input placeholder="10-digit number" value={form.mobile} onChange={(e) => setForm({ ...form, mobile: e.target.value })} /></div>
             <div className="space-y-2">
-              <Label>Roles *</Label>
+              <Label>Roles<RequiredMark /></Label>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 border rounded-md p-4">
                 {SYSTEM_ROLES.map((r) => (
                   <div key={r.id} className="flex items-center space-x-2">

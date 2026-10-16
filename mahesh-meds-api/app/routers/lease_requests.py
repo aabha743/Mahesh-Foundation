@@ -32,6 +32,7 @@ from app.permissions import (
     active_users_with_permission,
     active_users_with_role,
     enforce_center_resource_access,
+    get_optional_user,
     is_center_scoped_operator,
     require_lease_permission,
     require_permission,
@@ -40,6 +41,7 @@ from app.permissions import (
 from app.leasing import (
     EXPIRED_REQUEST_DETAIL,
     PICKUP_WINDOW_HOURS,
+    REQUEST_DURATIONS,
     RETURNABLE_LEASE_DB_STATUSES,
     RETURN_CONDITION_ASSET_STATUS,
     asset_status_to_api,
@@ -61,10 +63,18 @@ from app.audit import write_audit_log
 
 router = APIRouter()
 
+# Who a rejected requester is told to contact (the rejection SMS's {contact_info}).
+REJECTION_CONTACT = "Mahesh Foundation team"
+
 
 @router.get("/api/v1/lease-requests/by-token/{token}", response_model=PublicLeaseRequestOut)
-def get_lease_request_by_token(token: str, request: Request, db: Session = Depends(get_db)):
-    """Public token lookup endpoint with request header + line items."""
+def get_lease_request_by_token(
+    token: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    viewer: User | None = Depends(get_optional_user),
+):
+    """Public token lookup endpoint with request header + line items (staff also see rejection reasons)."""
     req = (
         db.query(LeaseRequest)
         .filter(func.lower(LeaseRequest.token_number) == token.strip().lower())
@@ -72,7 +82,7 @@ def get_lease_request_by_token(token: str, request: Request, db: Session = Depen
     )
     if not req:
         raise HTTPException(status_code=404, detail="Lease request not found")
-    result = build_public_lease_lookup_result(db, req)
+    result = build_public_lease_lookup_result(db, req, include_rejection_reasons=viewer is not None)
     write_audit_log(
         db,
         request,
@@ -293,13 +303,13 @@ def create_lease_request(
     if not payload.delivery_address or not payload.delivery_address.strip():
         raise HTTPException(status_code=400, detail="Delivery address is required.")
 
-    if not payload.delivery_landmark or not payload.delivery_landmark.strip():
-        raise HTTPException(status_code=400, detail="Delivery landmark is required.")
+    # The closest landmark is optional; store nothing rather than an empty string.
+    payload.delivery_landmark = (payload.delivery_landmark or "").strip() or None
 
-    if payload.expected_duration not in {"1 Week", "2 Weeks"}:
+    if payload.expected_duration not in REQUEST_DURATIONS:
         raise HTTPException(
             status_code=400,
-            detail="The maximum expected lease duration is 2 weeks. Allowed values: 1 Week, 2 Weeks."
+            detail=f"The maximum expected lease duration is 4 weeks. Allowed values: {', '.join(REQUEST_DURATIONS)}."
         )
 
     for item in payload.items:
@@ -586,8 +596,8 @@ def update_lease_request(
             event_name="request_rejected_user",
             variables={
                 "token_number": lease.token_number,
-                "rejection_reason": lease.rejection_reason or "",
-                "contact_info": lease.rejection_reason or "Mahesh Foundation team",
+                # Rejection reasons are not shared with requesters.
+                "contact_info": REJECTION_CONTACT,
             },
             db=db,
             reference_id=lease.id,

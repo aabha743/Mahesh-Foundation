@@ -67,6 +67,17 @@ def get_current_user(
     return user
 
 
+def get_optional_user(
+    db: Session = Depends(get_db),
+    access_token: str = Cookie(None)
+) -> User | None:
+    """For public endpoints that show staff a little more: the logged-in staff user, or None for visitors."""
+    try:
+        return get_current_user(db, access_token)
+    except HTTPException:
+        return None
+
+
 def _get_user_permissions(user: User) -> set[str]:
     """Extract all permissions from user's roles."""
     permissions = set()

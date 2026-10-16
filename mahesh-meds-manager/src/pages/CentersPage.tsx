@@ -13,6 +13,7 @@ import { apiFetch } from "@/lib/api";
 import { useAuth } from "@/hooks/useAuth";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { RequiredMark } from "@/components/RequiredMark";
 
 type Center = {
   id: string;
@@ -534,9 +535,9 @@ export default function CentersPage() {
                     <Phone className="h-3.5 w-3.5" /> +91 {center.contactPhone}
                   </div>
                   <div className="grid grid-cols-3 gap-2 text-center border-t border-border pt-3">
-                    <div><p className="text-lg font-bold text-foreground">{center.totalAssets}</p><p className="text-[10px] text-muted-foreground">Assets</p></div>
-                    <div><p className="text-lg font-bold text-primary">{center.activeLeases}</p><p className="text-[10px] text-muted-foreground">Active Leases</p></div>
-                    <div><p className="text-lg font-bold text-muted-foreground">{center.staff}</p><p className="text-[10px] text-muted-foreground">Staff</p></div>
+                    <div><p className="text-lg font-bold text-foreground">{center.totalAssets}</p><p className="text-xs text-muted-foreground">Assets</p></div>
+                    <div><p className="text-lg font-bold text-primary">{center.activeLeases}</p><p className="text-xs text-muted-foreground">Active Leases</p></div>
+                    <div><p className="text-lg font-bold text-muted-foreground">{center.staff}</p><p className="text-xs text-muted-foreground">Staff</p></div>
                   </div>
                   <div className="flex flex-col sm:flex-row gap-2 pt-2 border-t border-border">
                     {can("centers.manage") && (
@@ -627,10 +628,10 @@ export default function CentersPage() {
         <SheetContent className="w-full overflow-y-auto sm:max-w-md">
           <SheetHeader><SheetTitle>Add New Center</SheetTitle><SheetDescription>Register a new distribution center</SheetDescription></SheetHeader>
           <div className="space-y-4 mt-6">
-            <div className="space-y-2"><Label>Center Name *</Label><Input placeholder="e.g. Nizamabad" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></div>
+            <div className="space-y-2"><Label>Center Name<RequiredMark /></Label><Input placeholder="e.g. Nizamabad" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></div>
             <div className="space-y-2"><Label>Full Address</Label><Textarea placeholder="Full address..." value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} /></div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div className="space-y-2"><Label>City *</Label><Input placeholder="City" value={form.city} onChange={(e) => setForm({ ...form, city: e.target.value })} /></div>
+              <div className="space-y-2"><Label>City<RequiredMark /></Label><Input placeholder="City" value={form.city} onChange={(e) => setForm({ ...form, city: e.target.value })} /></div>
               <div className="space-y-2"><Label>State</Label><Input placeholder="State" value={form.state} onChange={(e) => setForm({ ...form, state: e.target.value })} /></div>
             </div>
             <div className="space-y-2"><Label>PIN Code</Label><Input placeholder="e.g. 500001" value={form.pinCode} onChange={(e) => setForm({ ...form, pinCode: e.target.value })} /></div>
@@ -649,10 +650,10 @@ export default function CentersPage() {
         <SheetContent className="w-full overflow-y-auto sm:max-w-md">
           <SheetHeader><SheetTitle>Edit Center</SheetTitle><SheetDescription>Update distribution center details</SheetDescription></SheetHeader>
           <div className="space-y-4 mt-6">
-            <div className="space-y-2"><Label>Center Name *</Label><Input placeholder="e.g. Nizamabad" value={editForm.name} onChange={(e) => setEditForm({ ...editForm, name: e.target.value })} /></div>
+            <div className="space-y-2"><Label>Center Name<RequiredMark /></Label><Input placeholder="e.g. Nizamabad" value={editForm.name} onChange={(e) => setEditForm({ ...editForm, name: e.target.value })} /></div>
             <div className="space-y-2"><Label>Full Address</Label><Textarea placeholder="Full address..." value={editForm.address} onChange={(e) => setEditForm({ ...editForm, address: e.target.value })} /></div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div className="space-y-2"><Label>City *</Label><Input placeholder="City" value={editForm.city} onChange={(e) => setEditForm({ ...editForm, city: e.target.value })} /></div>
+              <div className="space-y-2"><Label>City<RequiredMark /></Label><Input placeholder="City" value={editForm.city} onChange={(e) => setEditForm({ ...editForm, city: e.target.value })} /></div>
               <div className="space-y-2"><Label>State</Label><Input placeholder="State" value={editForm.state} onChange={(e) => setEditForm({ ...editForm, state: e.target.value })} /></div>
             </div>
             <div className="space-y-2"><Label>PIN Code</Label><Input placeholder="e.g. 500001" value={editForm.pinCode} onChange={(e) => setEditForm({ ...editForm, pinCode: e.target.value })} /></div>
@@ -674,12 +675,12 @@ export default function CentersPage() {
             <SheetDescription>Create SKU and add initial stock to this center.</SheetDescription>
           </SheetHeader>
           <div className="space-y-4 mt-6">
-            <div className="space-y-2"><Label>SKU Name *</Label><Input value={skuForm.name} onChange={(e) => setSkuForm((p) => ({ ...p, name: e.target.value }))} /></div>
-            <div className="space-y-2"><Label>SKU Code *</Label><Input value={skuForm.skuCode} onChange={(e) => setSkuForm((p) => ({ ...p, skuCode: e.target.value }))} /></div>
+            <div className="space-y-2"><Label>SKU Name<RequiredMark /></Label><Input value={skuForm.name} onChange={(e) => setSkuForm((p) => ({ ...p, name: e.target.value }))} /></div>
+            <div className="space-y-2"><Label>SKU Code<RequiredMark /></Label><Input value={skuForm.skuCode} onChange={(e) => setSkuForm((p) => ({ ...p, skuCode: e.target.value }))} /></div>
             <div className="space-y-2"><Label>Category</Label><Input value={skuForm.category} onChange={(e) => setSkuForm((p) => ({ ...p, category: e.target.value }))} /></div>
             <div className="space-y-2"><Label>Description</Label><Textarea value={skuForm.description} onChange={(e) => setSkuForm((p) => ({ ...p, description: e.target.value }))} /></div>
             <div className="space-y-2"><Label>Image URL</Label><Input value={skuForm.imageUrl} onChange={(e) => setSkuForm((p) => ({ ...p, imageUrl: e.target.value }))} /></div>
-            <div className="space-y-2"><Label>Initial Quantity at Center *</Label><Input type="number" min={1} value={skuForm.initialQuantity} onChange={(e) => setSkuForm((p) => ({ ...p, initialQuantity: e.target.value }))} /></div>
+            <div className="space-y-2"><Label>Initial Quantity at Center<RequiredMark /></Label><Input type="number" min={1} value={skuForm.initialQuantity} onChange={(e) => setSkuForm((p) => ({ ...p, initialQuantity: e.target.value }))} /></div>
             <div className="space-y-2">
               <Label>Default Asset Status</Label>
               <Select value={skuForm.assetStatus} onValueChange={(v) => setSkuForm((p) => ({ ...p, assetStatus: v }))}>
@@ -717,8 +718,8 @@ export default function CentersPage() {
             <SheetDescription>Update SKU metadata and optionally add stock to selected center.</SheetDescription>
           </SheetHeader>
           <div className="space-y-4 mt-6">
-            <div className="space-y-2"><Label>SKU Name *</Label><Input value={editSkuForm.name} onChange={(e) => setEditSkuForm((p) => ({ ...p, name: e.target.value }))} /></div>
-            <div className="space-y-2"><Label>SKU Code *</Label><Input value={editSkuForm.skuCode} onChange={(e) => setEditSkuForm((p) => ({ ...p, skuCode: e.target.value }))} /></div>
+            <div className="space-y-2"><Label>SKU Name<RequiredMark /></Label><Input value={editSkuForm.name} onChange={(e) => setEditSkuForm((p) => ({ ...p, name: e.target.value }))} /></div>
+            <div className="space-y-2"><Label>SKU Code<RequiredMark /></Label><Input value={editSkuForm.skuCode} onChange={(e) => setEditSkuForm((p) => ({ ...p, skuCode: e.target.value }))} /></div>
             <div className="space-y-2"><Label>Category</Label><Input value={editSkuForm.category} onChange={(e) => setEditSkuForm((p) => ({ ...p, category: e.target.value }))} /></div>
             <div className="space-y-2"><Label>Description</Label><Textarea value={editSkuForm.description} onChange={(e) => setEditSkuForm((p) => ({ ...p, description: e.target.value }))} /></div>
             <div className="space-y-2"><Label>Image URL</Label><Input value={editSkuForm.imageUrl} onChange={(e) => setEditSkuForm((p) => ({ ...p, imageUrl: e.target.value }))} /></div>

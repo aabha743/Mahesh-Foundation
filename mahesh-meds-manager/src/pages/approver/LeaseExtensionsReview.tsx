@@ -6,7 +6,6 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Textarea } from "@/components/ui/textarea";
 import { listLeaseExtensions, reviewLeaseExtension, type LeaseExtension } from "@/lib/api";
 import { toast } from "sonner";
 
@@ -17,7 +16,6 @@ export default function LeaseExtensionsReview() {
   const [activeTab, setActiveTab] = useState<(typeof tabs)[number]>("pending");
   const [submittingId, setSubmittingId] = useState<string | null>(null);
   const [rejectTarget, setRejectTarget] = useState<LeaseExtension | null>(null);
-  const [rejectReason, setRejectReason] = useState("");
 
   useEffect(() => {
     void loadExtensions();
@@ -51,14 +49,10 @@ export default function LeaseExtensionsReview() {
     if (!rejectTarget) return;
     setSubmittingId(rejectTarget.id);
     try {
-      const updated = await reviewLeaseExtension(rejectTarget.id, {
-        status: "rejected",
-        rejection_reason: rejectReason.trim(),
-      });
+      const updated = await reviewLeaseExtension(rejectTarget.id, { status: "rejected" });
       setExtensions((current) => current.map((item) => (item.id === updated.id ? updated : item)));
       toast.success(`Rejected extension for ${rejectTarget.token_number}`);
       setRejectTarget(null);
-      setRejectReason("");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Could not reject extension");
     } finally {
@@ -132,10 +126,7 @@ export default function LeaseExtensionsReview() {
                       size="sm"
                       variant="outline"
                       className="border-destructive text-destructive hover:bg-destructive/10 gap-1"
-                      onClick={() => {
-                        setRejectTarget(extension);
-                        setRejectReason("");
-                      }}
+                      onClick={() => setRejectTarget(extension)}
                       disabled={submittingId === extension.id}
                     >
                       <XCircle className="h-3.5 w-3.5" />
@@ -162,15 +153,11 @@ export default function LeaseExtensionsReview() {
           <DialogHeader>
             <DialogTitle>Reject extension request</DialogTitle>
             <DialogDescription>
-              {rejectTarget ? `Provide a reason for rejecting the extension request for token ${rejectTarget.token_number}.` : ""}
+              {rejectTarget
+                ? `Reject the extension request for token ${rejectTarget.token_number}? The due date stays as it is.`
+                : ""}
             </DialogDescription>
           </DialogHeader>
-          <Textarea
-            rows={4}
-            value={rejectReason}
-            onChange={(e) => setRejectReason(e.target.value)}
-            placeholder="Reason for rejection"
-          />
           <DialogFooter>
             <Button variant="outline" onClick={() => setRejectTarget(null)} disabled={submittingId === rejectTarget?.id}>
               Cancel
@@ -178,7 +165,7 @@ export default function LeaseExtensionsReview() {
             <Button
               variant="destructive"
               onClick={() => void handleRejectConfirm()}
-              disabled={!rejectReason.trim() || submittingId === rejectTarget?.id}
+              disabled={submittingId === rejectTarget?.id}
             >
               Reject request
             </Button>
