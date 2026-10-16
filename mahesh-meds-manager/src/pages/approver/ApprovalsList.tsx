@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { Clock, CheckCircle, XCircle, Pencil, FolderCheck } from "lucide-react";
+import { Clock, CheckCircle, XCircle, Pencil, FolderCheck, Hourglass } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -26,10 +26,11 @@ export default function ApprovalsList() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const tab = searchParams.get("tab") || "pending";
-  const validTabs = ["pending", "approved", "reviewed", "rejected"];
+  const validTabs = ["pending", "approved", "expired", "reviewed", "rejected"];
   const currentTab = validTabs.includes(tab) ? tab : "pending";
   const [pending, setPending] = useState<ApprovalRequest[]>([]);
   const [approved, setApproved] = useState<ApprovalRequest[]>([]);
+  const [expired, setExpired] = useState<ApprovalRequest[]>([]);
   const [reviewed, setReviewed] = useState<ApprovalRequest[]>([]);
   const [rejected, setRejected] = useState<ApprovalRequest[]>([]);
   const [rejectId, setRejectId] = useState<string | null>(null);
@@ -106,7 +107,9 @@ export default function ApprovalsList() {
             preferredCenter:
               (r.fulfillment_centers ?? []).length > 0
                 ? (r.fulfillment_centers ?? []).map((center) => center.center_name).join(", ")
-                : "Awaiting stock mapping",
+                : status === "Expired"
+                  ? "Stock released"
+                  : "Awaiting stock mapping",
             referredBy: r.reference_name || "Not provided",
             submittedDate: r.created_at.slice(0, 10),
             daysWaiting,
@@ -121,6 +124,7 @@ export default function ApprovalsList() {
 
         setPending(mapped.filter((r) => r.status === "Pending"));
         setApproved(mapped.filter((r) => r.status === "Approved"));
+        setExpired(mapped.filter((r) => r.status === "Expired"));
         setReviewed(mapped.filter((r) => r.status !== "Pending"));
         setRejected(mapped.filter((r) => r.status === "Rejected"));
       } catch {
@@ -131,8 +135,9 @@ export default function ApprovalsList() {
   }, []);
 
   const handleApprove = async (req: ApprovalRequest, e: React.MouseEvent) => {
-    // Approves one pending request and moves it to reviewed list locally.
+    // Approves a pending request (or re-approves an expired one) and moves it to reviewed list locally.
     e.stopPropagation();
+    const isReapproval = req.status === "Expired";
     try {
       await apiFetch(`/api/v1/lease-requests/${req.id}`, {
         method: "PATCH",
@@ -143,10 +148,11 @@ export default function ApprovalsList() {
       return;
     }
     setPending((p) => p.filter((r) => r.id !== req.id));
+    setExpired((p) => p.filter((r) => r.id !== req.id));
     const updatedRequest = { ...req, status: "Approved" as const, reviewedDate: new Date().toISOString().split("T")[0], daysWaiting: 0 };
     setApproved((r) => [updatedRequest, ...r]);
     setReviewed((r) => [updatedRequest, ...r.filter((item) => item.id !== req.id)]);
-    toast.success(`Request ${req.token} approved`);
+    toast.success(`Request ${req.token} ${isReapproval ? "re-approved" : "approved"}`);
   };
 
   const handleRejectOpen = (id: string, e: React.MouseEvent) => {
@@ -158,7 +164,7 @@ export default function ApprovalsList() {
 
   const handleRejectConfirm = async () => {
     // Persists rejection reason and updates reviewed list.
-    const req = pending.find((r) => r.id === rejectId);
+    const req = [...pending, ...expired].find((r) => r.id === rejectId);
     if (!req) return;
     try {
       await apiFetch(`/api/v1/lease-requests/${req.id}`, {
@@ -170,6 +176,7 @@ export default function ApprovalsList() {
       return;
     }
     setPending((p) => p.filter((r) => r.id !== rejectId));
+    setExpired((p) => p.filter((r) => r.id !== rejectId));
     const updatedRequest = { ...req, status: "Rejected" as const, reviewedDate: new Date().toISOString().split("T")[0], daysWaiting: 0, rejectionReason: rejectReason };
     setRejected((r) => [updatedRequest, ...r]);
     setReviewed((r) => [updatedRequest, ...r.filter((item) => item.id !== req.id)]);
@@ -235,13 +242,17 @@ export default function ApprovalsList() {
         return "bg-primary/10 text-primary border-primary/30";
       case "Closed":
         return "bg-muted text-muted-foreground border-border";
+      case "Expired":
+        return "bg-warning/15 text-warning border-warning/30";
       default:
         return "bg-destructive/15 text-destructive border-destructive/30";
     }
   };
 
-  const renderCard = (req: ApprovalRequest, isPending: boolean) => (
-    // Shared card renderer for pending and reviewed tabs.
+  const renderCard = (req: ApprovalRequest, isPending: boolean) => {
+    // Shared card renderer for pending, expired and reviewed tabs.
+    const isExpired = req.status === "Expired";
+    return (
     <Card key={req.id} className="cursor-pointer hover:shadow-md transition-shadow" onClick={() => navigate(`/approvals/${req.id}`)}>
       <CardContent className="p-4 space-y-3">
         <div className="flex items-center justify-between flex-wrap gap-2">
@@ -286,11 +297,17 @@ export default function ApprovalsList() {
           <p className="text-xs text-muted-foreground bg-muted p-2 rounded">{req.notes}</p>
         )}
 
-        {isPending && (
+        {isExpired && (
+          <p className="text-xs text-warning bg-warning/5 p-2 rounded">
+            Not collected within the pickup window. Re-approving reserves stock again and sends the approval SMS.
+          </p>
+        )}
+
+        {(isPending || isExpired) && (
           <div className="flex flex-wrap gap-2 pt-1">
             {can("requests.approve") && (
               <Button size="sm" className="bg-success hover:bg-success/90 text-success-foreground gap-1" onClick={(e) => handleApprove(req, e)}>
-                <CheckCircle className="h-3.5 w-3.5" /> Approve
+                <CheckCircle className="h-3.5 w-3.5" /> {isExpired ? "Re-approve" : "Approve"}
               </Button>
             )}
             {can("requests.reject") && (
@@ -298,7 +315,7 @@ export default function ApprovalsList() {
                 <XCircle className="h-3.5 w-3.5" /> Reject
               </Button>
             )}
-            {can("requests.edit") && (
+            {isPending && can("requests.edit") && (
               <Button size="sm" variant="outline" className="gap-1 ml-auto" onClick={(e) => handleEditOpen(req, e)}>
                 <Pencil className="h-3.5 w-3.5" /> Edit
               </Button>
@@ -307,7 +324,8 @@ export default function ApprovalsList() {
         )}
       </CardContent>
     </Card>
-  );
+    );
+  };
 
   return (
     <div className="space-y-4">
@@ -315,6 +333,7 @@ export default function ApprovalsList() {
         <TabsList>
           <TabsTrigger value="pending" className="gap-1"><Clock className="h-3.5 w-3.5" /> Pending ({pending.length})</TabsTrigger>
           <TabsTrigger value="approved" className="gap-1"><CheckCircle className="h-3.5 w-3.5" /> Approved ({approved.length})</TabsTrigger>
+          <TabsTrigger value="expired" className="gap-1"><Hourglass className="h-3.5 w-3.5" /> Expired ({expired.length})</TabsTrigger>
           <TabsTrigger value="reviewed" className="gap-1"><FolderCheck className="h-3.5 w-3.5" /> Reviewed ({reviewed.length})</TabsTrigger>
           <TabsTrigger value="rejected" className="gap-1"><XCircle className="h-3.5 w-3.5" /> Rejected ({rejected.length})</TabsTrigger>
         </TabsList>
@@ -323,6 +342,7 @@ export default function ApprovalsList() {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         {currentTab === "pending" && pending.map((r) => renderCard(r, true))}
         {currentTab === "approved" && approvedSorted.map((r) => renderCard(r, false))}
+        {currentTab === "expired" && expired.map((r) => renderCard(r, false))}
         {currentTab === "reviewed" && reviewedSorted.map((r) => renderCard(r, false))}
         {currentTab === "rejected" && rejectedSorted.map((r) => renderCard(r, false))}
       </div>
@@ -340,6 +360,14 @@ export default function ApprovalsList() {
           <CheckCircle className="h-12 w-12 mx-auto mb-3 text-success" />
           <p className="text-lg font-medium">No approved requests</p>
           <p className="text-sm">Approved requests will appear here</p>
+        </div>
+      )}
+
+      {currentTab === "expired" && expired.length === 0 && (
+        <div className="text-center py-12 text-muted-foreground">
+          <Hourglass className="h-12 w-12 mx-auto mb-3 text-warning" />
+          <p className="text-lg font-medium">No expired requests</p>
+          <p className="text-sm">Approved requests not collected within the pickup window will appear here</p>
         </div>
       )}
 
@@ -421,6 +449,8 @@ function dbStatusToUi(status: string): ApprovalRequest["status"] {
       return "Approved";
     case "rejected":
       return "Rejected";
+    case "expired":
+      return "Expired";
     default:
       return "Pending";
   }

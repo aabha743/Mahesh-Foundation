@@ -347,10 +347,22 @@ export default function IssueDevice() {
                 <div className="text-sm">
                   <span className="text-muted-foreground">Requested:</span> {lease.skus.join(", ")}
                 </div>
-                <Badge className="bg-success/15 text-success border-success/30" variant="outline">
+                <Badge
+                  className={
+                    lease.status === "expired"
+                      ? "bg-warning/15 text-warning border-warning/30"
+                      : "bg-success/15 text-success border-success/30"
+                  }
+                  variant="outline"
+                >
                   {lease.status}
                 </Badge>
-                {!canEnterIssueFlow && !isAlreadyFullyIssued && (
+                {lease.status === "expired" && (
+                  <div className="flex items-center gap-2 text-warning text-sm">
+                    <AlertTriangle className="h-4 w-4" /> Pickup window expired. Ask an approver to re-approve this request before issuing.
+                  </div>
+                )}
+                {!canEnterIssueFlow && !isAlreadyFullyIssued && lease.status !== "expired" && (
                   <div className="flex items-center gap-2 text-warning text-sm">
                     <AlertTriangle className="h-4 w-4" /> Request is not approved yet
                   </div>

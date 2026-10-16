@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { ArchiveRestore, CalendarClock, CheckCircle, Clock, Package, Search, XCircle } from "lucide-react";
+import { ArchiveRestore, CalendarClock, CheckCircle, Clock, Hourglass, Package, Search, XCircle } from "lucide-react";
 import { format, formatDistanceToNow, parseISO } from "date-fns";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -26,7 +26,7 @@ type ExtensionHistoryEntry = {
 
 type StatusResult = {
   token: string;
-  status: "Pending" | "Approved" | "Rejected" | "Active" | "Closed";
+  status: "Pending" | "Approved" | "Rejected" | "Active" | "Closed" | "Expired";
   requestorName: string;
   mobile: string;
   dueDate?: string;
@@ -52,6 +52,7 @@ const statusConfig: Record<string, { icon: React.ReactNode; title: string; color
   Rejected: { icon: <XCircle className="h-12 w-12 text-destructive" />, title: "Request Not Approved", color: "text-destructive", bg: "bg-destructive/10" },
   Active: { icon: <Package className="h-12 w-12 text-info" />, title: "Devices Currently With You", color: "text-info", bg: "bg-info/10" },
   Closed: { icon: <ArchiveRestore className="h-12 w-12 text-muted-foreground" />, title: "Loan Completed - Thank You", color: "text-muted-foreground", bg: "bg-muted" },
+  Expired: { icon: <Hourglass className="h-12 w-12 text-warning" />, title: "Pickup Window Expired", color: "text-warning", bg: "bg-warning/10" },
 };
 
 function dbStatusToUi(status: string): StatusResult["status"] {
@@ -66,6 +67,8 @@ function dbStatusToUi(status: string): StatusResult["status"] {
       return "Active";
     case "closed":
       return "Closed";
+    case "expired":
+      return "Expired";
     default:
       return "Pending";
   }
@@ -344,6 +347,14 @@ export default function RequestStatus() {
                 {result.status === "Rejected" && (
                   <p className="text-sm text-muted-foreground mt-2">
                     Emergency contact: <span className="font-medium text-foreground">{emergencyContactText()}</span>
+                  </p>
+                )}
+                {result.status === "Expired" && (
+                  <p className="text-sm text-muted-foreground mt-2">
+                    Your request was approved, but the devices were not collected within the pickup window, so they have been
+                    released for other patients. Please contact us to have it re-approved, or submit a new request.
+                    <br />
+                    Contact: <span className="font-medium text-foreground">{emergencyContactText()}</span>
                   </p>
                 )}
                 {result.status === "Active" && <p className="text-sm text-muted-foreground mt-2">Your request is currently active and devices are issued.</p>}

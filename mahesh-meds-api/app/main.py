@@ -720,7 +720,7 @@ def lease_status_to_api(status: str) -> str:
 
 def resolve_lease_db_status(current_db_status: str, item_asset_ids: list[str | None]) -> str:
     """Server-authoritative fulfillment status derived from line-item assignment."""
-    if current_db_status in {"rejected", "returned", "partially_returned"}:
+    if current_db_status in {"rejected", "returned", "partially_returned", "expired"}:
         return current_db_status
     if item_asset_ids and all(item_asset_ids):
         return "issued"
@@ -766,6 +766,39 @@ EXTENSION_DURATION_DAYS = {
     "1 month": 30,
 }
 ACTIVE_LEASE_DB_STATUSES = {"issued", "partially_returned"}
+
+# How long stock stays reserved for an approved request before it is released and the
+# request is marked expired (see app.jobs.reminders.release_expired_blocks).
+PICKUP_WINDOW_HOURS = int(os.getenv("PICKUP_WINDOW_HOURS", "72"))
+if PICKUP_WINDOW_HOURS <= 0:
+    raise RuntimeError("PICKUP_WINDOW_HOURS must be a positive number of hours")
+EXPIRED_REQUEST_DETAIL = (
+    "The pickup window for this request has expired. "
+    "An approver must re-approve it before devices can be issued."
+)
+
+
+def reserve_stock(db: Session, lease: LeaseRequest, sku_ids: list[str], release_at: datetime | None) -> int:
+    """Hold one available unit per requested SKU at the pickup center; returns the number of holds added."""
+    created = 0
+    for sku_id in sku_ids:
+        stock_row = db.execute(
+            text("SELECT available_count FROM sku_stock_by_center WHERE sku_id = :sku_id AND center_id = :center_id"),
+            {"sku_id": sku_id, "center_id": lease.preferred_center_id}
+        ).first()
+        avail_count = stock_row[0] if stock_row else 0
+        if avail_count > 0:
+            db.add(
+                SKUBlock(
+                    lease_request_id=lease.id,
+                    sku_id=sku_id,
+                    center_id=lease.preferred_center_id,
+                    status="blocked",
+                    release_at=release_at
+                )
+            )
+            created += 1
+    return created
 
 
 def parse_extension_duration_days(requested_duration: str) -> int | None:
@@ -1920,6 +1953,13 @@ def build_fulfillment_plan(db: Session, lease_request_id: str) -> tuple[list[dic
     return fulfillment_centers, fulfillment_message
 
 
+def fulfillment_plan_for(db: Session, req: LeaseRequest) -> tuple[list[dict], str | None]:
+    """Fulfillment plan for display; an expired request has nothing to collect until re-approved."""
+    if req.status == "expired":
+        return [], None
+    return build_fulfillment_plan(db, req.id)
+
+
 def fulfillment_center_names(fulfillment_centers: list[dict]) -> str:
     """Render center names for SMS and UI copy."""
     names = [center["center_name"] for center in fulfillment_centers if center.get("center_name")]
@@ -1958,7 +1998,7 @@ def build_public_lease_lookup_result(db: Session, req: LeaseRequest) -> dict:
         for _, sku_id, name, quantity_requested, asset_id, due_date in sku_rows
     ]
     extension_eligible, extension_reason, pending_extension_request = evaluate_extension_eligibility(db, req)
-    fulfillment_centers, fulfillment_message = build_fulfillment_plan(db, req.id)
+    fulfillment_centers, fulfillment_message = fulfillment_plan_for(db, req)
     res = {
         **LeaseRequestOut.model_validate(req).model_dump(),
         "status": lease_status_to_api(req.status),
@@ -2361,7 +2401,7 @@ def list_lease_requests(
 
     response_rows = []
     for req in requests:
-        fulfillment_centers, fulfillment_message = build_fulfillment_plan(db, req.id)
+        fulfillment_centers, fulfillment_message = fulfillment_plan_for(db, req)
         response_rows.append(
             {
                 **LeaseRequestOut.model_validate(req).model_dump(),
@@ -2429,23 +2469,7 @@ def create_lease_request(
         )
         
         # Create active blocks for available stock at preferred center
-        for item in items_payload:
-            sku_id = item["sku_id"]
-            stock_row = db.execute(
-                text("SELECT available_count FROM sku_stock_by_center WHERE sku_id = :sku_id AND center_id = :center_id"),
-                {"sku_id": sku_id, "center_id": lease.preferred_center_id}
-            ).first()
-            avail_count = stock_row[0] if stock_row else 0
-            if avail_count > 0:
-                db.add(
-                    SKUBlock(
-                        lease_request_id=lease.id,
-                        sku_id=sku_id,
-                        center_id=lease.preferred_center_id,
-                        status="blocked",
-                        release_at=None
-                    )
-                )
+        reserve_stock(db, lease, [item["sku_id"] for item in items_payload], release_at=None)
 
         db.commit()
     except IntegrityError:
@@ -2527,6 +2551,13 @@ def update_lease_request(
         for item in items_payload:
             if not db.get(SKU, item["sku_id"]):
                 raise HTTPException(status_code=400, detail=f"Invalid sku_id in items: {item['sku_id']}")
+    if payload.status == "expired":
+        raise HTTPException(status_code=400, detail="Requests are marked expired automatically when the pickup window passes")
+    was_expired = lease.status == "expired"
+    if was_expired:
+        assigns_devices = items_payload is not None and any(item.get("asset_id") for item in items_payload)
+        if payload.status not in {"approved", "rejected"} or assigns_devices:
+            raise HTTPException(status_code=400, detail=EXPIRED_REQUEST_DETAIL)
     if "status" in data and data["status"] is not None:
         data["status"] = lease_status_to_db(data["status"])
     for key, value in data.items():
@@ -2574,7 +2605,7 @@ def update_lease_request(
             [item.get("asset_id") for item in items_payload],
         )
         lease.due_date = max(active_due_dates) if active_due_dates else None
-    elif lease.status not in {"rejected", "returned", "partially_returned"}:
+    elif lease.status not in {"rejected", "returned", "partially_returned", "expired"}:
         lease.status = resolve_lease_db_status(lease.status, [item.asset_id for item in existing_items])
         active_due_dates = [
             item.due_date
@@ -2584,12 +2615,21 @@ def update_lease_request(
         lease.due_date = max(active_due_dates) if active_due_dates else None
 
     # Update stock blocks based on request status transitions
+    pickup_deadline = datetime.now(UTC).replace(tzinfo=None) + timedelta(hours=PICKUP_WINDOW_HOURS)
+    if was_expired and lease.status == "approved":
+        # The old holds were released when the request expired, so re-approval reserves afresh.
+        line_items = (
+            items_payload
+            if items_payload is not None
+            else [{"sku_id": item.sku_id, "asset_id": item.asset_id} for item in existing_items]
+        )
+        reserve_stock(db, lease, [item["sku_id"] for item in line_items if not item.get("asset_id")], release_at=pickup_deadline)
     if lease.status == "approved":
         db.query(SKUBlock).filter(
             SKUBlock.lease_request_id == lease.id,
             SKUBlock.status == "blocked"
         ).update({
-            "release_at": datetime.now(UTC).replace(tzinfo=None) + timedelta(hours=24)
+            "release_at": pickup_deadline
         }, synchronize_session=False)
     elif lease.status == "rejected":
         db.query(SKUBlock).filter(

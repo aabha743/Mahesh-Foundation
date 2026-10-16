@@ -6,7 +6,7 @@ from sqlalchemy import and_, exists, func
 from sqlalchemy.orm import Session, joinedload
 
 from app.database import SessionLocal
-from app.models import LeaseItem, LeaseRequest, NotificationLog, SKUBlock
+from app.models import AuditLog, LeaseItem, LeaseRequest, NotificationLog, SKUBlock
 from app.services.sms import format_mobile, send_template_sms
 
 logger = logging.getLogger(__name__)
@@ -119,36 +119,69 @@ def send_due_date_reminders() -> None:
         db.close()
 
 
+def _overdue_holds(db: Session, now_time: datetime, lease_request_id: str | None = None):
+    query = (
+        db.query(SKUBlock)
+        .filter(SKUBlock.status == "blocked")
+        .filter(SKUBlock.release_at.is_not(None))
+        .filter(SKUBlock.release_at < now_time)
+    )
+    if lease_request_id is not None:
+        query = query.filter(SKUBlock.lease_request_id == lease_request_id)
+    return query
+
+
+def _release_request_holds(db: Session, lease_request_id: str, now_time: datetime) -> None:
+    """Release one request's overdue holds; expire the request if nothing was ever issued on it."""
+    req = db.get(LeaseRequest, lease_request_id)
+    has_issued_lines = (
+        db.query(LeaseItem.id)
+        .filter(LeaseItem.lease_request_id == lease_request_id, LeaseItem.asset_id.is_not(None))
+        .first()
+        is not None
+    )
+    reason = "approved_timeout" if req and req.status == "approved" else "timeout"
+    for block in _overdue_holds(db, now_time, lease_request_id).all():
+        block.status = "released"
+        block.release_reason = reason
+        block.release_at = now_time
+
+    # A partly issued request keeps its status: a device is already with the patient.
+    if req and req.status == "approved" and not has_issued_lines:
+        req.status = "expired"
+        db.add(
+            AuditLog(
+                center_id=req.preferred_center_id,
+                action="request_expired",
+                entity_type="lease_request",
+                entity_id=req.id,
+                old_value={"status": "approved", "token": req.token_number},
+                new_value={"status": "expired", "token": req.token_number, "actor_role": "system: pickup window job"},
+            )
+        )
+        logger.info("Request %s expired: pickup window passed without collection", req.token_number)
+    else:
+        logger.info("Released overdue stock holds for request %s (%s)", lease_request_id, reason)
+
+
 def release_expired_blocks() -> None:
-    """Finds all blocked SKU blocks past their release_at time and releases them."""
+    """Releases stock holds whose pickup window has passed and expires uncollected approved requests.
+
+    Each request is committed on its own, so one bad row cannot block the rest.
+    """
     db = SessionLocal()
     try:
         now_time = datetime.now(UTC).replace(tzinfo=None)
-        expired_blocks = (
-            db.query(SKUBlock)
-            .filter(SKUBlock.status == "blocked")
-            .filter(SKUBlock.release_at.is_not(None))
-            .filter(SKUBlock.release_at < now_time)
-            .all()
-        )
-        if not expired_blocks:
-            return
-
-        for block in expired_blocks:
-            req = db.get(LeaseRequest, block.lease_request_id)
-            reason = "timeout"
-            if req and req.status == "approved":
-                reason = "approved_timeout"
-                req.status = "expired"
-            
-            block.status = "released"
-            block.release_reason = reason
-            block.release_at = now_time
-            logger.info(f"Released expired SKU block {block.id} (SKU: {block.sku_id}) for request {block.lease_request_id} as {reason}.")
-        
-        db.commit()
-    except Exception as e:
-        logger.exception(f"Error in release_expired_blocks task: {e}")
-        db.rollback()
+        lease_request_ids = [
+            row.lease_request_id
+            for row in _overdue_holds(db, now_time).with_entities(SKUBlock.lease_request_id).distinct()
+        ]
+        for lease_request_id in lease_request_ids:
+            try:
+                _release_request_holds(db, lease_request_id, now_time)
+                db.commit()
+            except Exception:
+                db.rollback()
+                logger.exception("Could not release overdue stock holds for request %s", lease_request_id)
     finally:
         db.close()
