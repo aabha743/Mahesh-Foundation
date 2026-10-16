@@ -85,6 +85,35 @@ class RequestFormAndRejectionTests(support.LeaseApiTestCase):
         self.assertEqual(compute_due_date("4 Weeks", issued), date(2026, 10, 29))
         self.assertEqual(compute_due_date("3 Weeks", issued), date(2026, 10, 22))
 
+    # --- what a public submission cannot set ------------------------------------
+
+    def test_submitted_status_and_review_fields_are_ignored(self):
+        for status in ("approved", "rejected", "active", "closed"):
+            with self.subTest(status=status):
+                response = self.submit(status=status, approval_comments="self-approved", rejection_reason="n/a")
+
+                self.assertEqual(response.status_code, 200, response.text)
+                self.assertEqual(response.json()["status"], "pending")
+                self.db.rollback()
+                lease = self.db.get(LeaseRequest, response.json()["id"])
+                self.assertEqual((lease.status, lease.approval_comments, lease.rejection_reason), ("pending", None, None))
+                self.assertEqual(self.sms_count(lease, "request_approved_user"), 0)
+                self.assertEqual(self.audit_count(lease, "approve_request"), 0)
+
+    def test_device_assignment_in_a_submission_is_ignored(self):
+        device = self.make_asset()
+
+        response = self.submit(status="active", items=[{"sku_id": self.sku.id, "quantity_requested": 1, "asset_id": device.id}])
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.db.rollback()
+        lease = self.db.get(LeaseRequest, response.json()["id"])
+        self.assertEqual(lease.status, "pending")
+        self.assertEqual([line.asset_id for line in self.items(lease)], [None])
+        self.reload(device)
+        self.assertEqual(device.status, "available")
+        self.assertEqual(self.sms_count(lease, "device_issued_user"), 0)
+
     # --- rejecting a request ---------------------------------------------------
 
     def test_reject_without_reason_sends_generic_contact(self):

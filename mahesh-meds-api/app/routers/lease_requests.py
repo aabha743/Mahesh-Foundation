@@ -318,7 +318,9 @@ def create_lease_request(
 
     payload_data = payload.model_dump()
     items_payload = payload_data.pop("items", [])
-    payload_data["status"] = lease_status_to_db(payload_data["status"])
+    # A public submission is always a new, unreviewed request: any status, review fields or device
+    # assignments sent with it are ignored. Only staff approve, reject or issue.
+    payload_data.update(status="pending", approval_comments=None, rejection_reason=None)
     lease = LeaseRequest(**payload_data)
     db.add(lease)
     try:
@@ -329,14 +331,9 @@ def create_lease_request(
                     lease_request_id=lease.id,
                     sku_id=item["sku_id"],
                     quantity_requested=item.get("quantity_requested", 1),
-                    asset_id=item.get("asset_id"),
                 )
             )
-        lease.status = resolve_lease_db_status(
-            lease.status,
-            [item.get("asset_id") for item in items_payload],
-        )
-        
+
         # Create active blocks for available stock at preferred center
         reserve_stock(db, lease, [item["sku_id"] for item in items_payload], release_at=None)
 
