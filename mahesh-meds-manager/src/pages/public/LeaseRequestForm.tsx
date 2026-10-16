@@ -14,6 +14,20 @@ import { apiFetch } from "@/lib/api";
 
 const durations = ["1 Week", "2 Weeks"];
 
+// Used for the initial form and for "Submit Another Request", so a reset clears every field.
+const EMPTY_FORM = {
+  name: "",
+  mobile: "",
+  aadhar: "",
+  patientName: "",
+  deliveryAddress: "",
+  deliveryLandmark: "",
+  referredBy: "",
+  preferredCenterId: "",
+  duration: "",
+  notes: "",
+};
+
 function SkuThumbnail({ name, imageUrl }: { name: string; imageUrl: string | null }) {
   const [hasError, setHasError] = useState(false);
 
@@ -49,18 +63,7 @@ export default function LeaseRequestForm() {
   const [skus, setSkus] = useState<Array<{ id: string; name: string; category: string | null; image_url: string | null }>>([]);
   const [centers, setCenters] = useState<Array<{ id: string; name: string }>>([]);
   const [assets, setAssets] = useState<Array<{ sku_id: string; center_id: string | null; status: string }>>([]);
-  const [formData, setFormData] = useState({
-    name: "",
-    mobile: "",
-    aadhar: "",
-    patientName: "",
-    deliveryAddress: "",
-    deliveryLandmark: "",
-    referredBy: "",
-    preferredCenterId: "",
-    duration: "",
-    notes: ""
-  });
+  const [formData, setFormData] = useState(EMPTY_FORM);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [filterArea, setFilterArea] = useState("all");
   const [filterSku, setFilterSku] = useState("all");
@@ -229,7 +232,7 @@ export default function LeaseRequestForm() {
               </div>
               <div className="flex flex-col gap-2">
                 <Button onClick={() => navigate(`/status?token=${submittedToken}`)}>Track My Request</Button>
-                <Button variant="outline" onClick={() => { setSubmitted(false); setQuantities({}); setShowForm(false); setFormData({ name: "", mobile: "", aadhar: "", referredBy: "", duration: "", notes: "" }); }}>Submit Another Request</Button>
+                <Button variant="outline" onClick={() => { setSubmitted(false); setQuantities({}); setShowForm(false); setFormData(EMPTY_FORM); }}>Submit Another Request</Button>
               </div>
             </CardContent>
           </Card>

@@ -1,7 +1,7 @@
 import unittest
 from datetime import datetime, UTC, timedelta
 from app.database import SessionLocal
-from app.models import LeaseRequest, SKUBlock, SKU, Center, Asset, LeaseItem
+from app.models import LeaseRequest, SKUBlock, SKU, Center, LeaseItem
 from app.jobs.reminders import release_expired_blocks
 
 class StockBlockingTests(unittest.TestCase):
