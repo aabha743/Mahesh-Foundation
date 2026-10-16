@@ -256,7 +256,7 @@ def required_lease_permission(
 ) -> str:
     """Decide which permission a lease update needs from what it changes compared with the stored request:
     - assigning a device not yet on the request (full or partial issue) -> devices.issue
-    - removing an assigned device, closing, or a partial return -> devices.collect
+    - removing an assigned device, or closing -> devices.collect
     - approving a pending or expired request -> requests.approve
     - rejecting -> requests.reject
     - anything else, e.g. an approver changing items or notes -> requests.edit
@@ -264,8 +264,6 @@ def required_lease_permission(
     if payload.status == "rejected":
         return "requests.reject"
     if payload.status == "closed":
-        return "devices.collect"
-    if payload.status == "active" and payload.notes is not None and payload.notes.startswith("Partial return:"):
         return "devices.collect"
     if payload.items is not None:
         assigned_before = {item.asset_id for item in existing_items if item.asset_id}

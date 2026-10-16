@@ -138,11 +138,7 @@ def reserve_stock(db: Session, lease: LeaseRequest, sku_ids: list[str], release_
 
 
 def lease_devices(db: Session, lease: LeaseRequest, lines: list[dict], current_user: User) -> None:
-    """Check the devices newly issued on a request and mark them leased in the same transaction as the update.
-
-    A device already marked leased is accepted only if no other open request holds it, so an issue
-    started from an older frontend (which marked devices leased in separate calls first) still completes.
-    """
+    """Check the devices newly issued on a request and mark them leased in the same transaction as the update."""
     asset_ids = [line["asset_id"] for line in lines]
     if len(set(asset_ids)) != len(asset_ids):
         raise HTTPException(status_code=400, detail="The same device was selected for more than one line")
@@ -156,7 +152,7 @@ def lease_devices(db: Session, lease: LeaseRequest, lines: list[dict], current_u
             raise HTTPException(status_code=400, detail=f"Device {asset.serial_number} is not the requested model")
         if center_scoped and asset.center_id != current_user.center_id:
             raise HTTPException(status_code=403, detail=f"Device {asset.serial_number} is not at your center")
-        if asset.status not in {"available", "leased"}:
+        if asset.status != "available":
             raise HTTPException(
                 status_code=400,
                 detail=f"Device {asset.serial_number} is not available ({asset_status_to_api(asset.status)})",

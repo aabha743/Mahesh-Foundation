@@ -31,7 +31,8 @@ class RequiredLeasePermissionTests(unittest.TestCase):
         self.check({"status": "active", "items": [line("s1", "a1"), line("s2", "a2")]}, "approved", ["a1", None], "devices.issue")
         self.check({"items": [line("s1")]}, "issued", ["a1"], "devices.collect")
         self.check({"status": "closed"}, "issued", ["a1"], "devices.collect")
-        self.check({"status": "active", "notes": "Partial return: 1 items returned, 1 still leased"}, "issued", ["a1", "a2"], "devices.collect")
+        # Returns go through POST /returns now; a note is just a note.
+        self.check({"status": "active", "notes": "Partial return: 1 items returned, 1 still leased"}, "issued", ["a1", "a2"], "requests.edit")
         # Re-sending the same devices changes nothing about devices.
         self.check({"status": "approved", "items": [line("s1", "a1")]}, "approved", ["a1"], "requests.edit")
 
@@ -110,7 +111,8 @@ class LeaseUpdateApiTests(support.LeaseApiTestCase):
         self.assertEqual(self.asset_status(device), "available")
 
     def test_device_on_another_open_request_is_refused(self):
-        device = self.make_asset(status="leased")
+        # Even if its status was set back to available by hand, a device still out on another request is refused.
+        device = self.make_asset(status="available")
         self.make_lease("issued", [device.id])
         lease = self.make_lease("approved", [None])
 
@@ -156,15 +158,17 @@ class LeaseUpdateApiTests(support.LeaseApiTestCase):
 
         self.assertEqual(response.status_code, 400, response.text)
 
-    def test_device_marked_leased_by_older_frontend_is_accepted(self):
-        # Before this change the frontend marked devices leased in separate calls before the update.
+    def test_device_already_marked_leased_is_refused(self):
+        # Only the issue itself marks a device leased, so a leased device is never available to issue.
         device = self.make_asset(status="leased")
         lease = self.make_lease("approved", [None])
 
         response = self.issue(lease, [line(self.sku.id, device.id)], status="active")
 
-        self.assertEqual(response.status_code, 200, response.text)
-        self.assertEqual(response.json()["status"], "active")
+        self.assertEqual(response.status_code, 400, response.text)
+        self.assertIn("not available (leased)", response.json()["detail"])
+        self.reload(lease)
+        self.assertEqual(lease.status, "approved")
 
     # --- approving -----------------------------------------------------------
 
