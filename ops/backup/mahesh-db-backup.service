@@ -1,0 +1,10 @@
+[Unit]
+Description=Mahesh MES MariaDB backup to Cloud Storage
+After=mariadb.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/mahesh-db-backup
+Nice=10
+IOSchedulingClass=idle

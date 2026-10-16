@@ -94,19 +94,15 @@ EOF
 fi
 
 echo "=== Setting up Automated Daily Database Backups ==="
-sudo mkdir -p /var/backups/mahesh-meds
-sudo cat <<'EOF_BACKUP' | sudo tee /usr/local/bin/backup_mahesh_meds.sh
-#!/bin/bash
-BACKUP_DIR="/var/backups/mahesh-meds"
-TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
-BACKUP_FILE="${BACKUP_DIR}/db_backup_${TIMESTAMP}.sql.gz"
-mkdir -p "${BACKUP_DIR}"
-mysqldump -u mahesh_app -pMaheshAppPass2026! mahesh_meds | gzip > "${BACKUP_FILE}"
-find "${BACKUP_DIR}" -type f -name "db_backup_*.sql.gz" -mtime +30 -delete
-EOF_BACKUP
-
-sudo chmod +x /usr/local/bin/backup_mahesh_meds.sh
-(crontab -l 2>/dev/null | grep -v "/usr/local/bin/backup_mahesh_meds.sh"; echo "0 2 * * * /usr/local/bin/backup_mahesh_meds.sh >/dev/null 2>&1") | crontab -
+# Nightly dump at 02:00 IST, uploaded to gs://mf-medical-equipment-seva-db-backups.
+# Uploads need the VM to run as the mes-vm-runtime service account (see HANDOVER_SOP_GUIDE.md).
+sudo install -o root -g root -m 0750 "${PROJECT_ROOT}/ops/backup/mahesh-db-backup.sh" /usr/local/sbin/mahesh-db-backup
+sudo install -o root -g root -m 0750 "${PROJECT_ROOT}/ops/backup/verify-restore.sh" /usr/local/sbin/mahesh-db-verify-restore
+sudo install -o root -g root -m 0644 "${PROJECT_ROOT}/ops/backup/mahesh-db-backup.service" /etc/systemd/system/mahesh-db-backup.service
+sudo install -o root -g root -m 0644 "${PROJECT_ROOT}/ops/backup/mahesh-db-backup.timer" /etc/systemd/system/mahesh-db-backup.timer
+sudo rm -f /usr/local/bin/backup_mahesh_meds.sh
+sudo systemctl daemon-reload
+sudo systemctl enable --now mahesh-db-backup.timer
 
 
 sudo chown -R www-data:www-data /var/www/mahesh-meds-api
