@@ -231,39 +231,42 @@ class LeaseReturnTests(support.LeaseApiTestCase):
 
         self.assert_refused(response, 403, "devices.collect", lease, devices)
 
-    # --- return screen from before this change -----------------------------
+    # --- other ways a request could be closed ---------------------------------
 
-    def test_older_screen_partial_return_keeps_notes_and_status(self):
+    def test_device_taken_back_on_assets_page_settles_the_request(self):
         lease, (first, second) = self.issued_lease()
 
-        asset_response = self.patch_asset(first, {"status": "available", "center_id": self.center.id, "notes": None})
-        self.assertEqual(asset_response.status_code, 200, asset_response.text)
+        for device, expected in ((first, "partially_returned"), (second, "returned")):
+            response = self.patch_asset(device, {"status": "available", "center_id": self.center.id})
+            self.assertEqual(response.status_code, 200, response.text)
+            self.reload(lease)
+            self.assertEqual(lease.status, expected)
+        self.assertEqual(lease.notes, "Approver note: deliver to ward 3")
+        self.assertIsNotNone(self.line_for(lease, first).returned_at)
+
+    def test_closing_a_request_directly_is_refused(self):
+        lease, devices = self.issued_lease()
+
+        response = self.patch_as(self.center_manager, lease, {"status": "closed"})
+
+        self.assertEqual(response.status_code, 400, response.text)
+        self.assertIn("Return Device", response.json()["detail"])
         self.reload(lease)
-        self.assertEqual(lease.status, "partially_returned")
+        self.assertEqual(lease.status, "issued")
+        self.assertEqual(self.asset_row(devices[0]).status, "leased")
+
+    def test_partial_return_note_is_no_longer_a_collect_action(self):
+        lease, _ = self.issued_lease()
+
         response = self.patch_as(self.center_manager, lease, {
             "status": "active",
             "notes": "Partial return: 1 items returned, 1 still leased",
         })
 
-        self.assertEqual(response.status_code, 200, response.text)
+        # Editing notes needs requests.edit, which center managers do not have.
+        self.assertEqual(response.status_code, 403, response.text)
         self.reload(lease)
-        self.assertEqual(lease.status, "partially_returned")
-        self.assertEqual(lease.notes, "Approver note: deliver to ward 3\nPartial return: 1 items returned, 1 still leased")
-        self.assertEqual(self.sms_count(lease, "device_issued_user"), 0)
-
-    def test_older_screen_full_return_closes_request(self):
-        lease, devices = self.issued_lease()
-
-        for device in devices:
-            asset_response = self.patch_asset(device, {"status": "available", "center_id": self.center.id, "notes": None})
-            self.assertEqual(asset_response.status_code, 200, asset_response.text)
-        self.reload(lease)
-        self.assertEqual(lease.status, "returned")
-        response = self.patch_as(self.center_manager, lease, {"status": "closed"})
-
-        self.assertEqual(response.status_code, 200, response.text)
-        self.assertEqual(response.json()["status"], "closed")
-        self.assertEqual(self.audit_count(lease, "request_updated"), 1)
+        self.assertEqual(lease.notes, "Approver note: deliver to ward 3")
 
 
 if __name__ == "__main__":

@@ -162,8 +162,8 @@ def update_asset(
     for key, value in data.items():
         setattr(asset, key, value)
     if returned_line:
-        # Returns now go through POST /lease-requests/{id}/returns; this keeps the request in step
-        # when a device is taken back here instead (asset screens, or a return screen opened before the change).
+        # Returns normally go through POST /lease-requests/{id}/returns; this keeps the request in step
+        # when a leased device is marked available or under repair here instead (Assets page).
         lease = db.get(LeaseRequest, returned_line.lease_request_id)
         if lease and lease.status in RETURNABLE_LEASE_DB_STATUSES:
             lines = db.query(LeaseItem).filter(LeaseItem.lease_request_id == lease.id).all()

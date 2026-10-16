@@ -412,6 +412,12 @@ def update_lease_request(
                 raise HTTPException(status_code=400, detail=f"Invalid sku_id in items: {item['sku_id']}")
     if payload.status == "expired":
         raise HTTPException(status_code=400, detail="Requests are marked expired automatically when the pickup window passes")
+    if payload.status == "closed":
+        # Closing here would leave the devices recorded as out; returns go through POST /returns.
+        raise HTTPException(
+            status_code=400,
+            detail="A request closes when its last device is taken back on the Return Device screen",
+        )
     previous_status = lease.status
     was_expired = previous_status == "expired"
     if was_expired:
@@ -427,12 +433,10 @@ def update_lease_request(
             lease_devices(db, lease, newly_issued, current_user)
     if "status" in data and data["status"] is not None:
         data["status"] = lease_status_to_db(data["status"])
-        # "active" also covers a partly returned request; don't turn it back into a fully issued one.
+        # "active" also covers a partly returned request; don't turn it back into a fully issued one
+        # (that would also send the "devices issued" SMS again).
         if data["status"] == "issued" and previous_status == "partially_returned":
             data["status"] = "partially_returned"
-    if payload.status == "active" and payload.notes and payload.notes.startswith("Partial return:") and lease.notes:
-        # Return screens from before POST /returns send a partial-return summary as the notes: add it, don't replace.
-        data["notes"] = f"{lease.notes}\n{payload.notes}"
     for key, value in data.items():
         setattr(lease, key, value)
     if items_payload is not None:
