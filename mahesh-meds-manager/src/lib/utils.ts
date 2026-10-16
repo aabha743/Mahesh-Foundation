@@ -21,3 +21,18 @@ export function formatLeaseStatus(status: string): string {
   
   return statusMap[status] || status;
 }
+
+/**
+ * Center label for a request card. The API only sends pickup guidance for pending and
+ * approved requests, so other requests fall back to the center the requester chose.
+ */
+export function formatPickupCenterLabel(
+  uiStatus: string,
+  fulfillmentCenterNames: string[],
+  preferredCenterName: string | undefined,
+): string {
+  if (fulfillmentCenterNames.length > 0) return fulfillmentCenterNames.join(", ");
+  if (uiStatus === "Expired") return "Stock released";
+  if (uiStatus === "Pending" || uiStatus === "Approved") return "Awaiting stock mapping";
+  return preferredCenterName ?? "—";
+}

@@ -240,15 +240,7 @@ export default function IssueDevice() {
     if (!lease || !centerId) return;
     setSubmitting(true);
     try {
-      for (const item of localPendingItems) {
-        const id = assetIds[item.key];
-        if (id) {
-          await apiFetch(`/api/v1/assets/${id}`, {
-            method: "PATCH",
-            body: JSON.stringify({ status: "leased" }),
-          });
-        }
-      }
+      // The server marks the assigned devices as leased in the same update as the request.
       const existingItems = (lease.items ?? []).length
         ? (lease.items ?? []).map((item) => ({
             sku_id: item.sku_id,
@@ -295,8 +287,8 @@ export default function IssueDevice() {
       );
       setIssued(true);
       toast.success("Issue recorded");
-    } catch {
-      toast.error("Failed to complete issue");
+    } catch (error) {
+      toast.error(error instanceof Error && error.message ? error.message : "Failed to complete issue");
     } finally {
       setSubmitting(false);
     }

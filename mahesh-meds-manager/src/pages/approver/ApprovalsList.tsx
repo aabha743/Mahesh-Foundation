@@ -11,7 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
 import { type ApprovalRequest } from "@/data/approverMockData";
-import { formatLeaseStatus } from "@/lib/utils";
+import { formatLeaseStatus, formatPickupCenterLabel } from "@/lib/utils";
 import { apiFetch } from "@/lib/api";
 import { useAuth } from "@/hooks/useAuth";
 
@@ -46,10 +46,11 @@ export default function ApprovalsList() {
     // Loads pending/reviewed requests and enriches each row with availability counts.
     async function loadData() {
       try {
-        const [requests, skus] = await Promise.all([
+        const [requests, skus, centers] = await Promise.all([
           apiFetch<Array<{
             id: string;
             token_number: string;
+            preferred_center_id: string | null;
             requestor_name: string;
             patient_name?: string | null;
             delivery_address?: string | null;
@@ -68,7 +69,9 @@ export default function ApprovalsList() {
             items?: Array<{ sku_id: string; sku_name: string; quantity_requested: number }>;
           }>>("/api/v1/lease-requests"),
           apiFetch<Array<{ id: string; name: string }>>("/api/v1/skus"),
+          apiFetch<Array<{ id: string; name: string }>>("/api/v1/centers?include_inactive=true"),
         ]);
+        const centerNameById = Object.fromEntries(centers.map((c) => [c.id, c.name]));
 
         const skuInventory = await apiFetch<Array<{ sku_id: string; status: string }>>("/api/v1/assets");
         const stockBySkuId: Record<string, number> = {};
@@ -104,12 +107,11 @@ export default function ApprovalsList() {
             mobile: r.mobile,
             aadhar: r.aadhar_number,
             items,
-            preferredCenter:
-              (r.fulfillment_centers ?? []).length > 0
-                ? (r.fulfillment_centers ?? []).map((center) => center.center_name).join(", ")
-                : status === "Expired"
-                  ? "Stock released"
-                  : "Awaiting stock mapping",
+            preferredCenter: formatPickupCenterLabel(
+              status,
+              (r.fulfillment_centers ?? []).map((center) => center.center_name),
+              r.preferred_center_id ? centerNameById[r.preferred_center_id] : undefined,
+            ),
             referredBy: r.reference_name || "Not provided",
             submittedDate: r.created_at.slice(0, 10),
             daysWaiting,
