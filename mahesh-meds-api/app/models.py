@@ -187,6 +187,10 @@ class LeaseRequest(Base):
     __table_args__ = (
         CheckConstraint("mobile REGEXP '^[0-9]{10}$'", name="chk_lease_mobile_10_digits"),
         CheckConstraint("aadhar_number REGEXP '^[0-9]{12}$'", name="chk_lease_aadhar_12_digits"),
+        CheckConstraint(
+            "patient_aadhar_number IS NULL OR patient_aadhar_number REGEXP '^[0-9]{12}$'",
+            name="chk_lease_patient_aadhar_12_digits",
+        ),
     )
 
     id: Mapped[str] = mapped_column(CHAR(36), primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -195,6 +199,12 @@ class LeaseRequest(Base):
     mobile: Mapped[str] = mapped_column(String(15), nullable=False)
     aadhar_number: Mapped[str] = mapped_column(String(20), nullable=False)
     patient_name: Mapped[str | None] = mapped_column(String(150), nullable=True)
+    patient_aadhar_number: Mapped[str | None] = mapped_column(String(20))
+    # Object names of the Aadhaar card photos (app.photo_storage); the same name for both when the requester is the patient.
+    aadhar_photo: Mapped[str | None] = mapped_column(String(255))
+    patient_aadhar_photo: Mapped[str | None] = mapped_column(String(255))
+    aadhar_consent_at: Mapped[datetime | None] = mapped_column(DateTime)
+    aadhar_photos_deleted_at: Mapped[datetime | None] = mapped_column(DateTime)
     delivery_address: Mapped[str | None] = mapped_column(Text, nullable=True)
     delivery_landmark: Mapped[str | None] = mapped_column(String(255), nullable=True)
     reference_name: Mapped[str | None] = mapped_column(String(150))
@@ -211,6 +221,18 @@ class LeaseRequest(Base):
     )
 
     preferred_center: Mapped[Center | None] = relationship("Center")
+
+    @property
+    def aadhar_photos_status(self) -> str:
+        """'present', 'deleted' (removed after the retention period) or 'none' (submitted before photos were asked for)."""
+        if self.aadhar_photos_deleted_at:
+            return "deleted"
+        return "present" if self.aadhar_photo else "none"
+
+    @property
+    def patient_photo_is_requesters(self) -> bool:
+        """True when the requester said they are the patient, so one Aadhaar photo serves both."""
+        return bool(self.aadhar_photo) and self.patient_aadhar_photo == self.aadhar_photo
 
 
 # Line items under a lease request (one row per SKU line).

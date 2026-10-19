@@ -16,6 +16,7 @@ import { apiFetch } from "@/lib/api";
 import { formatLeaseStatus, formatPickupCenterLabel } from "@/lib/utils";
 import { RequiredMark } from "@/components/RequiredMark";
 import { RejectRequestDialog } from "@/components/lease/RejectRequestDialog";
+import { AadharPhotos } from "@/components/lease/AadharPhotos";
 
 export default function ApprovalDetail() {
   const { id } = useParams();
@@ -45,6 +46,9 @@ export default function ApprovalDetail() {
             delivery_landmark?: string | null;
             mobile: string;
             aadhar_number: string;
+            patient_aadhar_number?: string | null;
+            aadhar_photos_status?: "present" | "deleted" | "none";
+            patient_photo_is_requesters?: boolean;
             reference_name: string | null;
             expected_duration: string | null;
             notes: string | null;
@@ -93,6 +97,9 @@ export default function ApprovalDetail() {
           deliveryLandmark: row.delivery_landmark || "",
           mobile: row.mobile,
           aadhar: row.aadhar_number,
+          patientAadhar: row.patient_aadhar_number ?? undefined,
+          aadharPhotosStatus: row.aadhar_photos_status ?? "none",
+          patientIsRequester: row.patient_photo_is_requesters ?? false,
           items,
           preferredCenter: formatPickupCenterLabel(
             status,
@@ -243,7 +250,24 @@ export default function ApprovalDetail() {
 
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-sm border-t pt-3">
             <div><span className="text-muted-foreground">Patient's Name</span><p className="font-medium text-foreground">{request.patientName || request.requestorName}</p></div>
+            <div>
+              <span className="text-muted-foreground">Patient's Aadhar</span>
+              {request.patientAadhar && !request.patientIsRequester ? (
+                <p className="font-medium text-foreground font-mono">{request.patientAadhar}</p>
+              ) : (
+                <p className="font-medium text-foreground">{request.patientIsRequester ? "Same as requester" : "Not provided"}</p>
+              )}
+            </div>
             <div><span className="text-muted-foreground">Referred By</span><p className="font-medium text-foreground">{request.referredBy}</p></div>
+          </div>
+
+          <div className="space-y-2 border-t pt-3">
+            <p className="text-sm font-medium text-foreground">Aadhaar card photos</p>
+            <AadharPhotos
+              requestId={request.id}
+              status={request.aadharPhotosStatus ?? "none"}
+              patientIsRequester={request.patientIsRequester ?? false}
+            />
           </div>
 
           <div className="grid grid-cols-1 gap-3 text-sm border-t pt-3">

@@ -62,7 +62,7 @@ class TrackingOtpTests(support.LeaseApiTestCase):
             "requestor_name": "Token Test", "mobile": support.random_mobile(), "aadhar_number": "999988887777",
             "patient_name": "P", "delivery_address": "A", "reference_name": "R",
             "preferred_center_id": self.center.id, "expected_duration": "1 Week",
-            "items": [{"sku_id": self.sku.id, "quantity_requested": 1}], **overrides,
+            "items": [{"sku_id": self.sku.id, "quantity_requested": 1}], **support.AADHAR_FIELDS, **overrides,
         }
         response = self.client.post("/api/v1/lease-requests", json=body)
         self.assertEqual(response.status_code, 200, response.text)

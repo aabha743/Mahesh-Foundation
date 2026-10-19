@@ -4,3 +4,6 @@ __pycache__/
 .venv/
 venv/
 *.pyc
+
+# Aadhaar photos saved locally in development (AADHAR_PHOTO_DIR, app/photo_storage.py)
+.local-photos/

@@ -94,6 +94,7 @@ DEBUG=false
 COOKIE_SECURE=true
 COOKIE_SAMESITE=lax
 PICKUP_WINDOW_HOURS=72
+AADHAR_PHOTO_BUCKET=${AADHAR_PHOTO_BUCKET:-}
 SMS_ENABLED=${SMS_ENABLED}
 SMS_PEID=${SMS_PEID:-}
 SMS_API_KEY=${SMS_API_KEY:-}
@@ -183,6 +184,8 @@ server {
     }
 
     location ~ ^/(api|auth|me|health|docs|openapi.json) {
+        # Request forms carry two Aadhaar card photos (the browser shrinks each to well under 1.5 MB).
+        client_max_body_size 6m;
         proxy_pass http://127.0.0.1:8000;
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;

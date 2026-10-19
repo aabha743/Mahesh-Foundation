@@ -198,6 +198,7 @@ def _shutdown_scheduler() -> None:
 
 
 from app.routers import (  # noqa: E402
+    aadhar_photos,
     assets,
     audit,
     auth,
@@ -210,5 +211,7 @@ from app.routers import (  # noqa: E402
     users,
 )
 
-for module in (audit, centers, users, skus, assets, lease_requests, handover, lease_extensions, auth, track):
+for module in (
+    audit, centers, users, skus, assets, lease_requests, aadhar_photos, handover, lease_extensions, auth, track,
+):
     app.include_router(module.router)

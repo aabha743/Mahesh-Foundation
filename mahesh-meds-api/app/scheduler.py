@@ -10,6 +10,7 @@ from sqlalchemy.engine import Connection
 
 from app.database import DATABASE_URL, engine
 
+from app.jobs.aadhar_photos import delete_expired_aadhar_photos
 from app.jobs.reminders import send_due_date_reminders, release_expired_blocks
 
 logger = logging.getLogger(__name__)
@@ -94,6 +95,18 @@ def _register_jobs() -> None:
         "interval",
         minutes=30,
         id="release_expired_blocks",
+        replace_existing=True,
+        coalesce=True,
+        max_instances=1,
+    )
+    # Does nothing until AADHAR_PHOTO_RETENTION_DAYS is set.
+    scheduler.add_job(
+        delete_expired_aadhar_photos,
+        "cron",
+        hour=3,
+        minute=30,
+        id="delete_expired_aadhar_photos",
+        misfire_grace_time=3600,
         replace_existing=True,
         coalesce=True,
         max_instances=1,

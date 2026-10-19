@@ -1,8 +1,10 @@
 """Shared setup for the lease request API tests (they need a *_test database, see conftest.py)."""
+import base64
 import secrets
 import unittest
 import uuid
 from datetime import datetime, UTC, timedelta
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
@@ -27,6 +29,16 @@ from app.models import (
 
 CSRF = "test-csrf-token"
 NO_HOLD = object()
+# Smallest thing the API accepts as a JPEG photo: the JPEG signature and enough bytes.
+PHOTO_JPEG = b"\xff\xd8\xff\xe0" + bytes(2000)
+PHOTO_B64 = base64.b64encode(PHOTO_JPEG).decode()
+# What a public submission needs since phase 4: the patient's Aadhaar number, both card photos and consent.
+AADHAR_FIELDS = {
+    "patient_aadhar_number": "999911112222",
+    "aadhar_photo": PHOTO_B64,
+    "patient_aadhar_photo": PHOTO_B64,
+    "aadhar_consent": True,
+}
 
 
 def utcnow() -> datetime:
@@ -91,6 +103,10 @@ class LeaseApiTestCase(unittest.TestCase):
     def setUp(self):
         # Start each test without an open transaction (see sms_count).
         self.db.rollback()
+        # Every test client has the same address; test_aadhar_photos.py checks the per-device limit itself.
+        limit = patch("app.routers.lease_requests.MAX_REQUESTS_PER_DEVICE_PER_HOUR", 10_000)
+        limit.start()
+        self.addCleanup(limit.stop)
 
     @classmethod
     def make_asset(cls, sku: SKU | None = None, center: Center | None = None, status: str = "available") -> Asset:
