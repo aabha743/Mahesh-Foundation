@@ -1,14 +1,17 @@
 """Lease requests: public token/mobile lookup, the request list, submit, approve/issue updates and returns."""
 
+import logging
+import uuid
 from datetime import date, datetime, UTC, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models import (
+    AuditLog,
     Center,
     User,
     SKU,
@@ -17,6 +20,7 @@ from app.models import (
     LeaseItem,
     SKUBlock,
 )
+from app.photo_storage import InvalidPhoto, PhotoStorageError, decode_photo, delete_photo, save_photo
 from app.schemas import (
     LeaseRequestCreate,
     LeaseRequestOut,
@@ -64,10 +68,23 @@ from app.leasing import (
 )
 from app.audit import write_audit_log
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter()
 
 # Who a rejected requester is told to contact (the rejection SMS's {contact_info}).
 REJECTION_CONTACT = "Mahesh Foundation team"
+# Public submissions carry photos, so one device (IP address) may send only this many per hour.
+MAX_REQUESTS_PER_DEVICE_PER_HOUR = 10
+
+
+def discard_photos(names: list[str]) -> None:
+    """Remove photos saved for a submission that did not go through."""
+    for name in names:
+        try:
+            delete_photo(name)
+        except PhotoStorageError:
+            logger.exception("Could not remove photo %s of a failed submission", name)
 
 
 @router.get("/api/v1/lease-requests/by-token/{token}", response_model=PublicLeaseRequestOut)
@@ -329,12 +346,70 @@ def create_lease_request(
         if not db.get(SKU, item.sku_id):
             raise HTTPException(status_code=400, detail=f"Invalid sku_id in items: {item.sku_id}")
 
-    payload_data = payload.model_dump()
+    # Aadhaar: both numbers and both card photos (one of each when the requester is the patient), with consent.
+    if not payload.aadhar_consent:
+        raise HTTPException(status_code=400, detail="Please agree to the Aadhaar consent to submit the request.")
+    if payload.patient_is_requester:
+        payload.patient_aadhar_number = payload.aadhar_number
+    elif not payload.patient_aadhar_number:
+        raise HTTPException(status_code=400, detail="The patient's Aadhaar number is required.")
+    if not payload.aadhar_photo:
+        raise HTTPException(status_code=400, detail="Please add a photo of the requester's Aadhaar card.")
+    if not payload.patient_is_requester and not payload.patient_aadhar_photo:
+        raise HTTPException(status_code=400, detail="Please add a photo of the patient's Aadhaar card.")
+    try:
+        photos = [("requester", *decode_photo(payload.aadhar_photo, "requester's Aadhaar photo"))]
+        if not payload.patient_is_requester:
+            photos.append(("patient", *decode_photo(payload.patient_aadhar_photo, "patient's Aadhaar photo")))
+    except InvalidPhoto as error:
+        raise HTTPException(status_code=400, detail=str(error)) from None
+
+    ip = request.client.host if request.client else None
+    if ip:
+        recent = db.query(AuditLog.id).filter(
+            AuditLog.action == "request_created",
+            AuditLog.ip_address == ip,
+            AuditLog.created_at >= func.date_sub(func.now(), text("INTERVAL 1 HOUR")),
+        ).count()
+        if recent >= MAX_REQUESTS_PER_DEVICE_PER_HOUR:
+            write_audit_log(db, request, action="request_rate_limited", entity_type="lease_request",
+                            new_value={"limit": "device_per_hour"})
+            db.commit()
+            raise HTTPException(status_code=429, detail="Too many requests from this device. Please try again in an hour.")
+
+    # Photos first, under the request's id: if storage fails, no request (and no token number) is used up.
+    lease_id = str(uuid.uuid4())
+    saved: list[str] = []
+    try:
+        for whose, data, content_type, extension in photos:
+            name = f"requests/{lease_id}/{whose}-{uuid.uuid4().hex[:12]}.{extension}"
+            save_photo(name, data, content_type)
+            saved.append(name)
+    except PhotoStorageError:
+        logger.exception("Could not save the Aadhaar photos of a new request")
+        discard_photos(saved)
+        raise HTTPException(
+            status_code=503, detail="We could not save the Aadhaar photos right now. Please try again in a moment."
+        ) from None
+
+    payload_data = payload.model_dump(
+        exclude={"aadhar_photo", "patient_aadhar_photo", "patient_is_requester", "aadhar_consent"}
+    )
     items_payload = payload_data.pop("items", [])
     # A public submission is always a new, unreviewed request: any status, review fields or device
     # assignments sent with it are ignored. Only staff approve, reject or issue.
     payload_data.update(status="pending", approval_comments=None, rejection_reason=None)
-    payload_data["token_number"] = next_token_number(db)
+    payload_data.update(
+        id=lease_id,
+        aadhar_photo=saved[0],
+        patient_aadhar_photo=saved[-1],  # the same photo when the requester is the patient
+        aadhar_consent_at=datetime.now(UTC).replace(tzinfo=None),
+    )
+    try:
+        payload_data["token_number"] = next_token_number(db)
+    except Exception:
+        discard_photos(saved)
+        raise
     lease = LeaseRequest(**payload_data)
     db.add(lease)
     try:
@@ -354,7 +429,12 @@ def create_lease_request(
         db.commit()
     except IntegrityError:
         db.rollback()
+        discard_photos(saved)
         raise HTTPException(status_code=409, detail="Token number already exists") from None
+    except Exception:
+        db.rollback()
+        discard_photos(saved)
+        raise
     db.refresh(lease)
     write_audit_log(
         db,

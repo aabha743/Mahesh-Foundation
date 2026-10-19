@@ -10,8 +10,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
 import { PublicHeader, PublicFooter } from "@/components/PublicHeader";
-import { apiFetch } from "@/lib/api";
+import { Checkbox } from "@/components/ui/checkbox";
+import { ApiError, apiFetch } from "@/lib/api";
 import { RequiredMark } from "@/components/RequiredMark";
+import { AadharPhotoInput } from "@/components/AadharPhotoInput";
 
 const durations = ["1 Week", "2 Weeks", "3 Weeks", "4 Weeks"];
 
@@ -20,7 +22,13 @@ const EMPTY_FORM = {
   name: "",
   mobile: "",
   aadhar: "",
+  /** Photos are JPEG data: URLs, shrunk in the browser (lib/photoUpload). */
+  aadharPhoto: null as string | null,
+  patientIsRequester: false,
   patientName: "",
+  patientAadhar: "",
+  patientAadharPhoto: null as string | null,
+  aadharConsent: false,
   deliveryAddress: "",
   deliveryLandmark: "",
   referredBy: "",
@@ -162,12 +170,27 @@ export default function LeaseRequestForm() {
     });
   };
 
+  // The Aadhaar fields drop their error as soon as they are filled in, so a photo never sits next to "Add a photo".
+  const clearErrors = (...keys: string[]) =>
+    setErrors((prev) => {
+      if (!keys.some((key) => prev[key])) return prev;
+      const next = { ...prev };
+      keys.forEach((key) => delete next[key]);
+      return next;
+    });
+
   const validate = () => {
     const e: Record<string, string> = {};
     if (!formData.name.trim()) e.name = "Name is required";
     if (!/^\d{10}$/.test(formData.mobile)) e.mobile = "Enter valid 10-digit mobile";
     if (!/^\d{12}$/.test(formData.aadhar.replace(/\s/g, ""))) e.aadhar = "Enter valid 12-digit Aadhaar";
-    if (!formData.patientName.trim()) e.patientName = "Patient name is required";
+    if (!formData.aadharPhoto) e.aadharPhoto = "Add a photo of the requester's Aadhaar card";
+    if (!formData.patientIsRequester) {
+      if (!formData.patientName.trim()) e.patientName = "Patient name is required";
+      if (!/^\d{12}$/.test(formData.patientAadhar.replace(/\s/g, ""))) e.patientAadhar = "Enter valid 12-digit Aadhaar";
+      if (!formData.patientAadharPhoto) e.patientAadharPhoto = "Add a photo of the patient's Aadhaar card";
+    }
+    if (!formData.aadharConsent) e.aadharConsent = "Please agree to continue";
     if (!formData.deliveryAddress.trim()) e.deliveryAddress = "Delivery address is required";
     if (!formData.referredBy.trim()) e.referredBy = "Referral source is required";
     if (!formData.preferredCenterId) e.preferredCenterId = "Preferred pickup center is required";
@@ -195,7 +218,12 @@ export default function LeaseRequestForm() {
           requestor_name: formData.name.trim(),
           mobile: formData.mobile.trim(),
           aadhar_number: formData.aadhar.replace(/\s/g, ""),
-          patient_name: formData.patientName.trim(),
+          aadhar_photo: formData.aadharPhoto,
+          patient_is_requester: formData.patientIsRequester,
+          patient_name: formData.patientIsRequester ? formData.name.trim() : formData.patientName.trim(),
+          patient_aadhar_number: formData.patientIsRequester ? null : formData.patientAadhar.replace(/\s/g, ""),
+          patient_aadhar_photo: formData.patientIsRequester ? null : formData.patientAadharPhoto,
+          aadhar_consent: formData.aadharConsent,
           delivery_address: formData.deliveryAddress.trim(),
           delivery_landmark: formData.deliveryLandmark.trim() || null,
           reference_name: formData.referredBy.trim(),
@@ -207,8 +235,10 @@ export default function LeaseRequestForm() {
       });
       setSubmittedToken(created.token_number);
       setSubmitted(true);
-    } catch {
-      setErrors((prev) => ({ ...prev, submit: "Unable to submit request. Please try again." }));
+    } catch (error) {
+      // Show the server's reason (e.g. a photo it could not use), except for raw validation output.
+      const reason = error instanceof ApiError && error.status !== 422 && error.message ? error.message : "";
+      setErrors((prev) => ({ ...prev, submit: reason || "Unable to submit request. Please try again." }));
     } finally {
       setIsSubmitting(false);
     }
@@ -542,6 +572,20 @@ export default function LeaseRequestForm() {
                     />
                     {errors.referredBy && <p className="text-xs text-destructive">{errors.referredBy}</p>}
                   </div>
+
+                  <div className="space-y-1.5 md:col-span-2">
+                    <Label htmlFor="requestor-aadhar-photo">Photo of Aadhaar Card<RequiredMark /></Label>
+                    <AadharPhotoInput
+                      id="requestor-aadhar-photo"
+                      subject="requester's Aadhaar card"
+                      value={formData.aadharPhoto}
+                      onChange={(photo) => {
+                        setFormData((p) => ({ ...p, aadharPhoto: photo }));
+                        if (photo) clearErrors("aadharPhoto");
+                      }}
+                      error={errors.aadharPhoto}
+                    />
+                  </div>
                 </div>
               </div>
 
@@ -552,17 +596,73 @@ export default function LeaseRequestForm() {
                 </div>
 
                 <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
-                  <div className="space-y-1.5 md:col-span-2">
-                    <Label htmlFor="patient-name">Patient's Name<RequiredMark /></Label>
-                    <Input
-                      id="patient-name"
-                      className="min-h-11"
-                      value={formData.patientName}
-                      onChange={(e) => setFormData((p) => ({ ...p, patientName: e.target.value }))}
-                      placeholder="Name of the person receiving the device"
+                  <div className="flex items-center gap-3 md:col-span-2">
+                    <Checkbox
+                      id="patient-is-requester"
+                      checked={formData.patientIsRequester}
+                      onCheckedChange={(checked) => {
+                        setFormData((p) => ({ ...p, patientIsRequester: checked === true }));
+                        if (checked === true) clearErrors("patientName", "patientAadhar", "patientAadharPhoto");
+                      }}
                     />
-                    {errors.patientName && <p className="text-xs text-destructive">{errors.patientName}</p>}
+                    <Label htmlFor="patient-is-requester" className="font-normal">I am the patient</Label>
                   </div>
+
+                  {formData.patientIsRequester ? (
+                    <p className="text-sm text-muted-foreground md:col-span-2">
+                      Your name, Aadhaar number and Aadhaar photo above will be used for the patient.
+                    </p>
+                  ) : (
+                    <>
+                      <div className="space-y-1.5">
+                        <Label htmlFor="patient-name">Patient's Name<RequiredMark /></Label>
+                        <Input
+                          id="patient-name"
+                          className="min-h-11"
+                          value={formData.patientName}
+                          onChange={(e) => {
+                            const value = e.target.value;
+                            setFormData((p) => ({ ...p, patientName: value }));
+                            if (value.trim()) clearErrors("patientName");
+                          }}
+                          placeholder="Name of the person receiving the device"
+                        />
+                        {errors.patientName && <p className="text-xs text-destructive">{errors.patientName}</p>}
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <Label htmlFor="patient-aadhar">Patient's Aadhar Number<RequiredMark /></Label>
+                        <Input
+                          id="patient-aadhar"
+                          className="min-h-11"
+                          inputMode="numeric"
+                          value={formData.patientAadhar}
+                          onChange={(e) => {
+                            const value = formatAadhar(e.target.value);
+                            setFormData((p) => ({ ...p, patientAadhar: value }));
+                            if (value.replace(/\s/g, "").length === 12) clearErrors("patientAadhar");
+                          }}
+                          placeholder="XXXX XXXX XXXX"
+                          maxLength={14}
+                        />
+                        {errors.patientAadhar && <p className="text-xs text-destructive">{errors.patientAadhar}</p>}
+                      </div>
+
+                      <div className="space-y-1.5 md:col-span-2">
+                        <Label htmlFor="patient-aadhar-photo">Photo of Patient's Aadhaar Card<RequiredMark /></Label>
+                        <AadharPhotoInput
+                          id="patient-aadhar-photo"
+                          subject="patient's Aadhaar card"
+                          value={formData.patientAadharPhoto}
+                          onChange={(photo) => {
+                            setFormData((p) => ({ ...p, patientAadharPhoto: photo }));
+                            if (photo) clearErrors("patientAadharPhoto");
+                          }}
+                          error={errors.patientAadharPhoto}
+                        />
+                      </div>
+                    </>
+                  )}
 
                   <div className="space-y-1.5 md:col-span-2">
                     <Label htmlFor="delivery-address">Delivery Address<RequiredMark /></Label>
@@ -639,6 +739,25 @@ export default function LeaseRequestForm() {
                   onChange={(e) => setFormData((p) => ({ ...p, notes: e.target.value }))}
                   placeholder="Any special requirements..."
                 />
+              </div>
+
+              <div className="space-y-1">
+                <div className="flex items-start gap-3 rounded-md border border-border bg-muted/30 p-3">
+                  <Checkbox
+                    id="aadhar-consent"
+                    className="mt-0.5"
+                    checked={formData.aadharConsent}
+                    onCheckedChange={(checked) => {
+                      setFormData((p) => ({ ...p, aadharConsent: checked === true }));
+                      if (checked === true) clearErrors("aadharConsent");
+                    }}
+                  />
+                  <Label htmlFor="aadhar-consent" className="text-sm font-normal leading-relaxed">
+                    I consent to Mahesh Foundation storing the Aadhaar numbers and card photos of the requester and patient to verify identity for this equipment loan. They are seen only by Foundation staff who review requests.
+                    <RequiredMark />
+                  </Label>
+                </div>
+                {errors.aadharConsent && <p className="text-xs text-destructive">{errors.aadharConsent}</p>}
               </div>
 
               {errors.submit && (

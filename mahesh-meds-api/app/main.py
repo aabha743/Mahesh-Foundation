@@ -7,6 +7,8 @@ import traceback
 from datetime import datetime, UTC
 
 from fastapi import FastAPI, Request
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
@@ -111,6 +113,17 @@ async def global_exception_handler(request: Request, exc: Exception):
     )
 
 
+@app.exception_handler(RequestValidationError)
+async def validation_error_handler(request: Request, exc: RequestValidationError):
+    # FastAPI's default answer repeats the submitted value in every error. For a request form carrying photos
+    # that is megabytes per missing field, so only where and what is wrong is sent back.
+    errors = [
+        {key: value for key, value in error.items() if key in ("type", "loc", "msg")}
+        for error in exc.errors()
+    ]
+    return JSONResponse(status_code=422, content={"detail": jsonable_encoder(errors)})
+
+
 @app.exception_handler(404)
 async def not_found_handler(request: Request, exc: Exception):
     return JSONResponse(
@@ -198,6 +211,7 @@ def _shutdown_scheduler() -> None:
 
 
 from app.routers import (  # noqa: E402
+    aadhar_photos,
     assets,
     audit,
     auth,
@@ -210,5 +224,7 @@ from app.routers import (  # noqa: E402
     users,
 )
 
-for module in (audit, centers, users, skus, assets, lease_requests, handover, lease_extensions, auth, track):
+for module in (
+    audit, centers, users, skus, assets, lease_requests, aadhar_photos, handover, lease_extensions, auth, track,
+):
     app.include_router(module.router)

@@ -117,6 +117,8 @@ interface ApiFetchOptions extends RequestInit {
   skipAuthRedirect?: boolean; // Don't redirect to login on 401 (for auth checks)
   /** Public page call: a 401 means "verify with OTP", so no staff-session refresh or login redirect. */
   publicRequest?: boolean;
+  /** Return the response body as a Blob (e.g. an image) instead of parsing JSON. */
+  blob?: boolean;
 }
 
 /**
@@ -184,6 +186,9 @@ export async function apiFetch<T>(
   // Handle empty responses (e.g., 204 No Content)
   if (response.status === 204) {
     return undefined as T;
+  }
+  if (init?.blob) {
+    return response.blob() as Promise<T>;
   }
 
   return response.json() as Promise<T>;
@@ -424,6 +429,11 @@ export async function verifyHandoverOtp(
     method: "POST",
     body: JSON.stringify({ center_id: centerId, otp }),
   });
+}
+
+/** An Aadhaar card photo of a request, for reviewers; every view is recorded. 410: deleted after the retention period. */
+export async function getAadharPhoto(leaseId: string, whose: "requester" | "patient"): Promise<Blob> {
+  return apiFetch(`/api/v1/lease-requests/${encodeURIComponent(leaseId)}/aadhar-photo/${whose}`, { blob: true });
 }
 
 /** True when an issue was refused because the requester's OTP has not been entered (or was already used / lapsed). */

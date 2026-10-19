@@ -164,6 +164,7 @@ class LeaseRequestBase(BaseModel):
     mobile: MobileNumber
     aadhar_number: AadharNumber
     patient_name: str | None = None
+    patient_aadhar_number: AadharNumber | None = None
     delivery_address: str | None = None
     delivery_landmark: str | None = None
     reference_name: str | None = None
@@ -190,6 +191,12 @@ class LeaseRequestCreate(LeaseRequestBase):
     reference_name: str
     preferred_center_id: str
     items: list[LeaseRequestItemCreate] = Field(default_factory=list)
+    # Aadhaar card photos, base64 (a data: URL is fine). Without patient_is_requester the patient's is required too.
+    # The length cap sits above the 1.5 MB photo limit, so an oversized photo gets a clear message (app.photo_storage).
+    aadhar_photo: str | None = Field(default=None, max_length=2_700_000)
+    patient_aadhar_photo: str | None = Field(default=None, max_length=2_700_000)
+    patient_is_requester: bool = False
+    aadhar_consent: bool = False
 
 
 class LeaseRequestOut(LeaseRequestBase):
@@ -197,6 +204,10 @@ class LeaseRequestOut(LeaseRequestBase):
     due_date: date | None = None
     created_at: datetime
     updated_at: datetime
+    # The photos themselves are only served to reviewers: GET /api/v1/lease-requests/{id}/aadhar-photo/{whose}.
+    aadhar_photos_status: str = "none"
+    patient_photo_is_requesters: bool = False
+    aadhar_consent_at: datetime | None = None
     model_config = ConfigDict(from_attributes=True)
 
 

@@ -7,6 +7,10 @@ export interface ApprovalRequest {
   deliveryLandmark?: string;
   mobile: string;
   aadhar: string;
+  patientAadhar?: string;
+  /** Whether the request has Aadhaar card photos; see AadharPhotos. */
+  aadharPhotosStatus?: "present" | "deleted" | "none";
+  patientIsRequester?: boolean;
   items: { sku: string; qty: number }[];
   preferredCenter: string;
   referredBy: string;
