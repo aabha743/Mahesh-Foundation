@@ -184,7 +184,7 @@ class LeaseRequestItemCreate(BaseModel):
 class LeaseRequestCreate(LeaseRequestBase):
     patient_name: str
     delivery_address: str
-    delivery_landmark: str
+    delivery_landmark: str | None = None
     reference_name: str
     preferred_center_id: str
     items: list[LeaseRequestItemCreate] = Field(default_factory=list)

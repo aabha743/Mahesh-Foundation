@@ -15,6 +15,7 @@ import { apiFetch } from "@/lib/api";
 import { dbAssetStatusToUi, uiAssetStatusToDb } from "@/lib/assetStatus";
 import { assetStatusOptions, type AssetStatus, type AssetView } from "@/lib/uiTypes";
 import { toast } from "sonner";
+import { RequiredMark } from "@/components/RequiredMark";
 
 type AssetCreateFlowProps = {
   open: boolean;
@@ -150,14 +151,14 @@ export function AssetCreateFlow({ open, onOpenChange, onCreated, onDone }: Asset
               <Input value="Generated automatically after save" disabled />
             </div>
             <div className="space-y-2">
-              <Label>SKU *</Label>
+              <Label>SKU<RequiredMark /></Label>
               <Select value={formData.skuName} onValueChange={(value) => setFormData((current) => ({ ...current, skuName: value }))}>
                 <SelectTrigger><SelectValue placeholder="Select SKU" /></SelectTrigger>
                 <SelectContent>{skuOptions.map((sku) => <SelectItem key={sku} value={sku}>{sku}</SelectItem>)}</SelectContent>
               </Select>
             </div>
             <div className="space-y-2">
-              <Label>Assigned Center *</Label>
+              <Label>Assigned Center<RequiredMark /></Label>
               <Select value={formData.assignedCenter} onValueChange={(value) => setFormData((current) => ({ ...current, assignedCenter: value }))}>
                 <SelectTrigger><SelectValue placeholder="Select Center" /></SelectTrigger>
                 <SelectContent>{centerOptions.map((center) => <SelectItem key={center} value={center}>{center}</SelectItem>)}</SelectContent>
@@ -192,7 +193,7 @@ export function AssetCreateFlow({ open, onOpenChange, onCreated, onDone }: Asset
               </Popover>
             </div>
             <div className="space-y-2">
-              <Label>Status *</Label>
+              <Label>Status<RequiredMark /></Label>
               <Select value={formData.status} onValueChange={(value) => setFormData((current) => ({ ...current, status: value as AssetStatus }))}>
                 <SelectTrigger><SelectValue placeholder="Select asset status" /></SelectTrigger>
                 <SelectContent>{assetStatusOptions.map((status) => <SelectItem key={status} value={status}>{status}</SelectItem>)}</SelectContent>
