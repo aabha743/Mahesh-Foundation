@@ -27,11 +27,12 @@ from app.schemas import (
     LeaseReturnOut,
 )
 from app.services.sms import send_template_sms
-from app.security import validate_csrf
+from app.security import get_track_mobile, validate_csrf
 from app.permissions import (
     active_users_with_permission,
     active_users_with_role,
     enforce_center_resource_access,
+    ensure_can_view_request,
     get_optional_user,
     is_center_scoped_operator,
     require_lease_permission,
@@ -54,6 +55,7 @@ from app.leasing import (
     lease_devices,
     lease_status_to_api,
     lease_status_to_db,
+    next_token_number,
     normalize_public_tracking_mobile,
     reserve_stock,
     resolve_lease_db_status,
@@ -73,8 +75,10 @@ def get_lease_request_by_token(
     request: Request,
     db: Session = Depends(get_db),
     viewer: User | None = Depends(get_optional_user),
+    track_mobile: str | None = Depends(get_track_mobile),
 ):
-    """Public token lookup endpoint with request header + line items (staff also see rejection reasons)."""
+    """Token lookup with request header + line items, for staff or a browser that verified the request's
+    mobile by OTP (POST /api/v1/track/verify-otp). Staff also see rejection reasons."""
     req = (
         db.query(LeaseRequest)
         .filter(func.lower(LeaseRequest.token_number) == token.strip().lower())
@@ -82,6 +86,7 @@ def get_lease_request_by_token(
     )
     if not req:
         raise HTTPException(status_code=404, detail="Lease request not found")
+    ensure_can_view_request(req.mobile, viewer, track_mobile)
     result = build_public_lease_lookup_result(db, req, include_rejection_reasons=viewer is not None)
     write_audit_log(
         db,
@@ -97,11 +102,18 @@ def get_lease_request_by_token(
 
 
 @router.get("/api/v1/lease-requests/by-mobile/{mobile}", response_model=list[PublicLeaseRequestOut])
-def get_lease_requests_by_mobile(mobile: str, request: Request, db: Session = Depends(get_db)):
-    """Public mobile lookup endpoint returning all requests linked to that number."""
+def get_lease_requests_by_mobile(
+    mobile: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    viewer: User | None = Depends(get_optional_user),
+    track_mobile: str | None = Depends(get_track_mobile),
+):
+    """All requests linked to a number, for staff or a browser that verified that number by OTP."""
     normalized_mobile = normalize_public_tracking_mobile(mobile)
     if not normalized_mobile:
         raise HTTPException(status_code=400, detail="Enter a valid 10-digit mobile number")
+    ensure_can_view_request(normalized_mobile, viewer, track_mobile)
 
     requests = (
         db.query(LeaseRequest)
@@ -321,6 +333,7 @@ def create_lease_request(
     # A public submission is always a new, unreviewed request: any status, review fields or device
     # assignments sent with it are ignored. Only staff approve, reject or issue.
     payload_data.update(status="pending", approval_comments=None, rejection_reason=None)
+    payload_data["token_number"] = next_token_number(db)
     lease = LeaseRequest(**payload_data)
     db.add(lease)
     try:

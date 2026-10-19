@@ -99,7 +99,7 @@ class LeaseExpiryTests(support.LeaseApiTestCase):
     def test_public_lookup_of_expired_request_has_no_pickup_guidance(self):
         lease = self.make_lease("expired", [None])
 
-        response = self.client.get(f"/api/v1/lease-requests/by-token/{lease.token_number}")
+        response = self.verified_client(lease.mobile).get(f"/api/v1/lease-requests/by-token/{lease.token_number}")
 
         self.assertEqual(response.status_code, 200, response.text)
         payload = response.json()

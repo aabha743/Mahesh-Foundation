@@ -197,7 +197,7 @@ def _shutdown_scheduler() -> None:
     stop_scheduler()
 
 
-from app.routers import assets, audit, auth, centers, lease_extensions, lease_requests, skus, users  # noqa: E402
+from app.routers import assets, audit, auth, centers, lease_extensions, lease_requests, skus, track, users  # noqa: E402
 
-for module in (audit, centers, users, skus, assets, lease_requests, lease_extensions, auth):
+for module in (audit, centers, users, skus, assets, lease_requests, lease_extensions, auth, track):
     app.include_router(module.router)

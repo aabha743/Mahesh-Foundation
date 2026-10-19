@@ -148,7 +148,7 @@ class RequestFormAndRejectionTests(support.LeaseApiTestCase):
         self.db.commit()
         url = f"/api/v1/lease-requests/by-token/{lease.token_number}"
 
-        public = self.client.get(url).json()
+        public = self.verified_client(lease.mobile).get(url).json()
         staff = self.staff_client().get(url).json()
 
         self.assertIsNone(public["rejection_reason"])
@@ -159,7 +159,7 @@ class RequestFormAndRejectionTests(support.LeaseApiTestCase):
         lease.rejection_reason = "Duplicate request"
         self.db.commit()
 
-        rows = self.client.get(f"/api/v1/lease-requests/by-mobile/{lease.mobile}").json()
+        rows = self.verified_client(lease.mobile).get(f"/api/v1/lease-requests/by-mobile/{lease.mobile}").json()
 
         self.assertEqual([row["rejection_reason"] for row in rows], [None])
 
@@ -208,7 +208,7 @@ class RequestFormAndRejectionTests(support.LeaseApiTestCase):
             headers={"X-CSRF-Token": support.CSRF},
         )
 
-        public = self.client.get(f"/api/v1/lease-requests/by-token/{extension.token_number}").json()
+        public = self.verified_client(extension.mobile).get(f"/api/v1/lease-requests/by-token/{extension.token_number}").json()
 
         self.assertEqual([entry["rejection_reason"] for entry in public["extension_history"]], [None])
 

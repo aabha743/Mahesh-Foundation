@@ -78,6 +78,15 @@ def get_optional_user(
         return None
 
 
+OTP_REQUIRED_DETAIL = "Verify with the OTP sent to the request's mobile number to see this request."
+
+
+def ensure_can_view_request(request_mobile: str, viewer: User | None, track_mobile: str | None) -> None:
+    """Requests are shown to staff, or to a browser that verified the request's mobile number by OTP."""
+    if viewer is None and track_mobile != request_mobile:
+        raise HTTPException(status_code=401, detail=OTP_REQUIRED_DETAIL)
+
+
 def _get_user_permissions(user: User) -> set[str]:
     """Extract all permissions from user's roles."""
     permissions = set()

@@ -182,6 +182,8 @@ class LeaseRequestItemCreate(BaseModel):
 
 
 class LeaseRequestCreate(LeaseRequestBase):
+    # The server issues the token (MF-<month>-<number>); one sent by the browser is ignored.
+    token_number: str | None = None
     patient_name: str
     delivery_address: str
     delivery_landmark: str | None = None
@@ -303,7 +305,10 @@ class LeaseExtensionBase(BaseModel):
 
 
 class LeaseExtensionCreate(LeaseExtensionBase):
-    pass
+    # Taken from the lease (the requester verified its mobile by OTP); older forms still send them.
+    requestor_name: str | None = None
+    mobile: str | None = None
+    aadhar_number: str | None = None
 
 
 class LeaseExtensionOut(BaseModel):
@@ -332,6 +337,15 @@ class LeaseExtensionReview(BaseModel):
     status: str
     approver_comments: str | None = None
     rejection_reason: str | None = None
+
+
+# --- Tracking a request (public, OTP to the request's mobile) ---
+class TrackOtpRequest(BaseModel):
+    query: str = Field(min_length=1, max_length=40)  # a token, or a 10-digit mobile number
+
+
+class TrackOtpVerify(TrackOtpRequest):
+    otp: str = Field(min_length=4, max_length=10)
 
 
 # --- Staff login ---

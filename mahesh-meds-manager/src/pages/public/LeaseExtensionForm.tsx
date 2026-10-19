@@ -3,6 +3,7 @@ import { format, isAfter, isFuture, parseISO, addDays, differenceInCalendarDays 
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { ArrowLeft, CalendarClock } from "lucide-react";
 import { PublicFooter, PublicHeader } from "@/components/PublicHeader";
+import { TrackOtpStep } from "@/components/TrackOtpStep";
 import { Button } from "@/components/ui/button";
 import { Calendar } from "@/components/ui/calendar";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -10,7 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Textarea } from "@/components/ui/textarea";
-import { createLeaseExtension, getLeaseRequestByToken, type LeaseRequestTokenLookup } from "@/lib/api";
+import { createLeaseExtension, getLeaseRequestByToken, needsOtp, type LeaseRequestTokenLookup } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { RequiredMark } from "@/components/RequiredMark";
@@ -20,12 +21,11 @@ export default function LeaseExtensionForm() {
   const [searchParams] = useSearchParams();
   const initialToken = (searchParams.get("token") ?? "").toUpperCase();
   const [tokenNumber, setTokenNumber] = useState(initialToken);
-  const [requestorName, setRequestorName] = useState("");
-  const [mobile, setMobile] = useState("");
-  const [aadharNumber, setAadharNumber] = useState("");
   const [requestedReturnDate, setRequestedReturnDate] = useState<Date | undefined>(undefined);
   const [reason, setReason] = useState("");
   const [tokenContext, setTokenContext] = useState<LeaseRequestTokenLookup | null>(null);
+  // The token waiting for OTP verification of its mobile number before the lease can be shown.
+  const [otpFor, setOtpFor] = useState<string | null>(null);
   const [lookupLoading, setLookupLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
@@ -42,17 +42,19 @@ export default function LeaseExtensionForm() {
   async function lookupToken(token: string) {
     if (!token.trim()) return;
     setLookupLoading(true);
+    setOtpFor(null);
     try {
       const lease = await getLeaseRequestByToken(token.trim());
       setTokenContext(lease);
       setTokenNumber(lease.token_number);
-      setRequestorName(lease.requestor_name);
-      setMobile(/\D/.test(lease.mobile) ? "" : lease.mobile);
-      setAadharNumber(/\D/.test(lease.aadhar_number) ? "" : lease.aadhar_number);
       setRequestedReturnDate(undefined);
     } catch (error) {
       setTokenContext(null);
-      toast.error(error instanceof Error ? error.message : "Could not validate token");
+      if (needsOtp(error)) {
+        setOtpFor(token.trim());
+      } else {
+        toast.error(error instanceof Error ? error.message : "Could not validate token");
+      }
     } finally {
       setLookupLoading(false);
     }
@@ -60,20 +62,8 @@ export default function LeaseExtensionForm() {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!tokenNumber.trim()) {
-      toast.error("Please enter and check a token number first");
-      return;
-    }
-    if (!requestorName.trim()) {
-      toast.error("Please enter the requestor name");
-      return;
-    }
-    if (mobile.trim().length !== 10) {
-      toast.error("Please enter a valid 10-digit mobile number");
-      return;
-    }
-    if (aadharNumber.trim().length !== 12) {
-      toast.error("Please enter a valid 12-digit Aadhaar number");
+    if (!tokenContext) {
+      toast.error("Please check and verify your token first");
       return;
     }
     if (!requestedReturnDate) {
@@ -104,16 +94,19 @@ export default function LeaseExtensionForm() {
     setSubmitting(true);
     try {
       await createLeaseExtension({
-        token_number: tokenNumber.trim(),
-        requestor_name: requestorName.trim(),
-        mobile: mobile.trim(),
-        aadhar_number: aadharNumber.trim(),
+        token_number: tokenContext.token_number,
         requested_due_date: format(requestedReturnDate, "yyyy-MM-dd"),
         reason: reason.trim(),
       });
       toast.success("Extension request submitted. You will be notified once reviewed.");
-      navigate(`/status?token=${encodeURIComponent(tokenNumber.trim())}`);
+      navigate(`/status?token=${encodeURIComponent(tokenContext.token_number)}`);
     } catch (error) {
+      if (needsOtp(error)) {
+        // The 30-minute verification ran out while filling in the form.
+        toast.error("Your verification has expired. Please verify with a new OTP and submit again.");
+        setOtpFor(tokenContext.token_number);
+        return;
+      }
       const message = error instanceof Error ? error.message : "Could not submit extension request";
       toast.error(
         message.includes("pending")
@@ -136,7 +129,8 @@ export default function LeaseExtensionForm() {
           </Link>
           <h2 className="text-2xl font-bold text-foreground">Request Lease Extension</h2>
           <p className="text-muted-foreground">
-            We’ll validate your active token first, then send the requested return date for approver review.
+            We'll verify your token with an OTP to the mobile number on the request, then send the requested return date
+            for approver review.
           </p>
         </div>
 
@@ -151,6 +145,7 @@ export default function LeaseExtensionForm() {
                 onChange={(e) => setTokenNumber(e.target.value.toUpperCase())}
                 placeholder="Enter token number"
                 className="font-mono"
+                aria-label="Token number"
               />
               <Button type="button" variant="secondary" onClick={() => void lookupToken(tokenNumber)} disabled={lookupLoading}>
                 {lookupLoading ? "Checking..." : "Check Token"}
@@ -159,6 +154,10 @@ export default function LeaseExtensionForm() {
 
             {tokenContext && (
               <div className="rounded-lg border bg-muted/30 p-4 text-sm space-y-2">
+                <p className="text-foreground">
+                  <span className="text-muted-foreground">Requested by:</span> {tokenContext.requestor_name}{" "}
+                  <span className="text-muted-foreground">({tokenContext.mobile})</span>
+                </p>
                 <div className="flex items-center gap-2 font-medium text-foreground">
                   <CalendarClock className="h-4 w-4 text-primary" />
                   Current due date: {tokenContext.due_date ? format(parseISO(tokenContext.due_date), "dd MMM yyyy") : "Not set"}
@@ -171,28 +170,15 @@ export default function LeaseExtensionForm() {
           </CardContent>
         </Card>
 
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Extension Request Details</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <form className="space-y-4" onSubmit={(e) => void handleSubmit(e)}>
-              <div className="grid gap-4 sm:grid-cols-2">
-                <div className="space-y-2">
-                  <Label htmlFor="requestor-name">Requestor name<RequiredMark /></Label>
-                  <Input id="requestor-name" value={requestorName} onChange={(e) => setRequestorName(e.target.value)} />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="mobile">Mobile<RequiredMark /></Label>
-                  <Input id="mobile" value={mobile} onChange={(e) => setMobile(e.target.value.replace(/\D/g, "").slice(0, 10))} />
-                </div>
-              </div>
+        {otpFor && <TrackOtpStep query={otpFor} onVerified={() => void lookupToken(otpFor)} />}
 
-              <div className="grid gap-4 sm:grid-cols-2">
-                <div className="space-y-2">
-                  <Label htmlFor="aadhar">Aadhaar<RequiredMark /></Label>
-                  <Input id="aadhar" value={aadharNumber} onChange={(e) => setAadharNumber(e.target.value.replace(/\D/g, "").slice(0, 12))} />
-                </div>
+        {tokenContext && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Extension Request Details</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <form className="space-y-4" onSubmit={(e) => void handleSubmit(e)}>
                 <div className="space-y-2">
                   <Label>Requested return date<RequiredMark /></Label>
                   <Popover>
@@ -225,30 +211,30 @@ export default function LeaseExtensionForm() {
                     Choose a date up to 2 weeks after the current due date.
                   </p>
                 </div>
-              </div>
 
-              <div className="space-y-2">
-                <Label htmlFor="reason">Reason<RequiredMark /></Label>
-                <Textarea
-                  id="reason"
-                  rows={4}
-                  placeholder="Tell us why you need more time with the device."
-                  value={reason}
-                  onChange={(e) => setReason(e.target.value)}
-                />
-              </div>
+                <div className="space-y-2">
+                  <Label htmlFor="reason">Reason<RequiredMark /></Label>
+                  <Textarea
+                    id="reason"
+                    rows={4}
+                    placeholder="Tell us why you need more time with the device."
+                    value={reason}
+                    onChange={(e) => setReason(e.target.value)}
+                  />
+                </div>
 
-              <div className="flex items-center justify-between gap-3 pt-2">
-                <p className="text-xs text-muted-foreground">
-                  Submission will be checked again against the original token, mobile, Aadhaar, and current lease eligibility.
-                </p>
-                <Button type="submit" disabled={submitting || (tokenContext !== null && !tokenContext.extension_eligible)}>
-                  {submitting ? "Submitting..." : "Submit Extension Request"}
-                </Button>
-              </div>
-            </form>
-          </CardContent>
-        </Card>
+                <div className="flex flex-col-reverse gap-3 pt-2 sm:flex-row sm:items-center sm:justify-between">
+                  <p className="text-xs text-muted-foreground">
+                    Your request is checked again against the lease's current eligibility when you submit.
+                  </p>
+                  <Button type="submit" className="w-full sm:w-auto" disabled={submitting || !tokenContext.extension_eligible}>
+                    {submitting ? "Submitting..." : "Submit Extension Request"}
+                  </Button>
+                </div>
+              </form>
+            </CardContent>
+          </Card>
+        )}
       </main>
       <PublicFooter />
     </div>

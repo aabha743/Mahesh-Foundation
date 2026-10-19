@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 from app.database import SessionLocal
 from app.main import app
 from app.permissions import invalidate_permission_cache
-from app.security import create_access_token
+from app.security import TRACK_COOKIE, create_access_token, create_track_token
 from app.models import Asset, AuditLog, Center, LeaseItem, LeaseRequest, NotificationLog, Role, SKU, SKUBlock, User
 
 CSRF = "test-csrf-token"
@@ -159,6 +159,10 @@ class LeaseApiTestCase(unittest.TestCase):
         count = self.db.query(AuditLog).filter(AuditLog.entity_id == lease.id, AuditLog.action == action).count()
         self.db.rollback()
         return count
+
+    def verified_client(self, mobile: str) -> TestClient:
+        """A browser that verified `mobile` by OTP (has a tracking session), as the public status page does."""
+        return TestClient(app, cookies={TRACK_COOKIE: create_track_token(mobile)})
 
     def patch_as(self, user: User, lease: LeaseRequest, body: dict):
         client = TestClient(app, cookies={"access_token": create_access_token(user.id), "csrf_token": CSRF})

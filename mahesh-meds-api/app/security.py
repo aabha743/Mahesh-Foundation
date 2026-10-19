@@ -82,6 +82,40 @@ def decode_access_token(token: str) -> dict | None:
         return None
 
 
+# --- Tracking sessions: a member of the public who verified their mobile by OTP (see app/routers/track.py) ---
+TRACK_COOKIE = "track_session"
+TRACK_SESSION_MINUTES = 30
+
+
+def create_track_token(mobile: str) -> str:
+    """Signed, short-lived proof that this browser verified `mobile` by OTP. It cannot be used as a staff login."""
+    expire = datetime.now(UTC) + timedelta(minutes=TRACK_SESSION_MINUTES)
+    return jwt.encode({"mobile": mobile, "exp": expire, "type": "track"}, JWT_SECRET, algorithm=JWT_ALGORITHM)
+
+
+def get_track_mobile(track_session: str | None = Cookie(None)) -> str | None:
+    """Dependency: the mobile number this browser verified by OTP in the last 30 minutes, or None."""
+    if not track_session:
+        return None
+    try:
+        payload = jwt.decode(track_session, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+    except jwt.InvalidTokenError:
+        return None
+    return payload.get("mobile") if payload.get("type") == "track" else None
+
+
+def track_cookie_options() -> dict:
+    """HttpOnly cookie for the tracking session; Lax so other sites cannot submit forms with it."""
+    return {
+        "httponly": True,
+        "secure": COOKIE_SECURE,
+        "samesite": COOKIE_SAMESITE,
+        "domain": COOKIE_DOMAIN,
+        "path": "/",
+        "max_age": TRACK_SESSION_MINUTES * 60,
+    }
+
+
 def generate_refresh_token() -> str:
     """Generate a cryptographically secure opaque refresh token."""
     return secrets.token_urlsafe(32)
