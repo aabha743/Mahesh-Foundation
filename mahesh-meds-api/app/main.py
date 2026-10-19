@@ -7,6 +7,8 @@ import traceback
 from datetime import datetime, UTC
 
 from fastapi import FastAPI, Request
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
@@ -109,6 +111,17 @@ async def global_exception_handler(request: Request, exc: Exception):
                       "Please try again or contact support."
         }
     )
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_error_handler(request: Request, exc: RequestValidationError):
+    # FastAPI's default answer repeats the submitted value in every error. For a request form carrying photos
+    # that is megabytes per missing field, so only where and what is wrong is sent back.
+    errors = [
+        {key: value for key, value in error.items() if key in ("type", "loc", "msg")}
+        for error in exc.errors()
+    ]
+    return JSONResponse(status_code=422, content={"detail": jsonable_encoder(errors)})
 
 
 @app.exception_handler(404)

@@ -126,6 +126,15 @@ class AadharPhotoTests(support.LeaseApiTestCase):
                     self.assertIn(message, response.json()["detail"])
                 self.assertEqual(self.leases_for(mobile), 0)
 
+    def test_validation_errors_do_not_echo_the_photos(self):
+        # A large body with many problems must get a small answer (nginx lets up to 6 MB through).
+        response = self.client.post("/api/v1/lease-requests", json={"aadhar_photo": support.PHOTO_B64 * 400})
+
+        self.assertEqual(response.status_code, 422)
+        self.assertLess(len(response.content), 3_000)
+        self.assertNotIn(support.PHOTO_B64[:40], response.text)
+        self.assertEqual(response.json()["detail"][0]["loc"][0], "body")
+
     def test_data_urls_png_and_webp_are_accepted(self):
         response = self.submit(aadhar_photo=f"data:image/png;base64,{b64(PNG)}", patient_aadhar_photo=b64(WEBP))
 
