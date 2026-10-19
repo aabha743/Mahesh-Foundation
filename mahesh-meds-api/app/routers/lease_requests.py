@@ -60,6 +60,7 @@ from app.leasing import (
     reserve_stock,
     resolve_lease_db_status,
     settle_lease_after_return,
+    use_handover_verification,
 )
 from app.audit import write_audit_log
 
@@ -444,12 +445,15 @@ def update_lease_request(
         assigns_devices = items_payload is not None and any(item.get("asset_id") for item in items_payload)
         if payload.status not in {"approved", "rejected"} or assigns_devices:
             raise HTTPException(status_code=400, detail=EXPIRED_REQUEST_DETAIL)
+    handover_verification_id = None
     if items_payload is not None:
         assigned_before = {item.asset_id for item in existing_items if item.asset_id}
         newly_issued = [item for item in items_payload if item.get("asset_id") and item["asset_id"] not in assigned_before]
         if newly_issued:
             if previous_status not in {"approved", "issued"}:
                 raise HTTPException(status_code=400, detail="Devices can only be issued against an approved request")
+            # The person collecting the devices must have confirmed the OTP sent to the request's mobile.
+            handover_verification_id = use_handover_verification(db, lease, current_user).id
             lease_devices(db, lease, newly_issued, current_user)
     if "status" in data and data["status"] is not None:
         data["status"] = lease_status_to_db(data["status"])
@@ -568,7 +572,11 @@ def update_lease_request(
         entity_id=lease.id,
         center_id=current_user.center_id,
         old_value={**before, "token": before.get("token_number")},
-        new_value={**LeaseRequestOut.model_validate(lease).model_dump(), "token": lease.token_number},
+        new_value={
+            **LeaseRequestOut.model_validate(lease).model_dump(),
+            "token": lease.token_number,
+            **({"handover_verification_id": handover_verification_id} if handover_verification_id else {}),
+        },
         current_user=current_user,
     )
     db.commit()

@@ -99,6 +99,13 @@ describe("timelineDescription", () => {
 
     expect(timelineDescription(row)).toBe("Status: approved → issued");
   });
+
+  it("shows which mobile a handover OTP went to", () => {
+    const row = log("handover_otp_verified", "2026-10-02T10:00:00Z", { new_value: { sent_to: "ending 93" } });
+
+    expect(humanizeAuditAction(row.action)).toBe("Recipient verified by OTP");
+    expect(timelineDescription(row)).toBe("Mobile ending 93");
+  });
 });
 
 describe("actors and labels", () => {

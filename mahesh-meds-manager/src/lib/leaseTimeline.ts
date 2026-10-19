@@ -130,6 +130,10 @@ export function humanizeAuditAction(action: string): string {
     request_updated: "Request / fulfillment updated",
     devices_returned: "Devices returned",
     token_viewed: "Token looked up",
+    handover_otp_sent: "Handover OTP sent to requester",
+    handover_otp_verified: "Recipient verified by OTP",
+    handover_otp_failed: "Handover OTP not accepted",
+    handover_otp_rate_limited: "Handover OTP limit reached",
   };
   return labels[action] ?? action.replace(/_/g, " ");
 }
@@ -210,6 +214,10 @@ export function timelineDescription(log: AuditLogRow): string | null {
   if (log.action === "reject_request") {
     const r = strField(nv.rejection_reason);
     return r ? `Reason recorded in log: ${r}` : null;
+  }
+  if (log.action.startsWith("handover_otp_")) {
+    const sentTo = strField(nv.sent_to);
+    return sentTo ? `Mobile ${sentTo}` : null;
   }
   return null;
 }

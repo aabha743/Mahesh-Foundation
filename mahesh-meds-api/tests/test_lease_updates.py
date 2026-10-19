@@ -41,6 +41,8 @@ class LeaseUpdateApiTests(support.LeaseApiTestCase):
     """Approver edits, center-manager issuing (partial and full) and the guards around assigning devices."""
 
     def issue(self, lease, lines, status="approved", user=None):
+        # The requester's OTP was entered first (the OTP itself is covered in test_handover_otp.py).
+        self.confirm_handover(user or self.center_manager, lease)
         return self.patch_as(user or self.center_manager, lease, {"status": status, "items": lines})
 
     def asset_status(self, asset: Asset) -> str:

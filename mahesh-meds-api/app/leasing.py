@@ -17,6 +17,7 @@ from app.models import (
     LeaseRequest,
     LeaseItem,
     LeaseExtension,
+    LeaseHandoverVerification,
     SKUBlock,
 )
 from app.schemas import LeaseRequestOut, LeaseFulfillmentCenterOut
@@ -149,6 +150,48 @@ def reserve_stock(db: Session, lease: LeaseRequest, sku_ids: list[str], release_
             )
             created += 1
     return created
+
+
+# Devices are handed over only after the person collecting them reads out an OTP sent to the request's
+# mobile (see app.routers.handover). The accepted OTP lets that staff member issue devices once, within this time.
+HANDOVER_VERIFICATION_MINUTES = 30
+HANDOVER_OTP_REQUIRED_DETAIL = (
+    "Verify the OTP sent to the requester's mobile before issuing devices. "
+    "An OTP is good for one handover, within 30 minutes."
+)
+
+
+def has_devices_to_issue(db: Session, lease: LeaseRequest) -> bool:
+    """True if devices can be issued against the request now: approved, or issued with lines still waiting."""
+    if lease.status == "approved":
+        return True
+    if lease.status != "issued":
+        return False
+    return db.query(LeaseItem.id).filter(
+        LeaseItem.lease_request_id == lease.id, LeaseItem.asset_id.is_(None)
+    ).first() is not None
+
+
+def use_handover_verification(db: Session, lease: LeaseRequest, current_user: User) -> LeaseHandoverVerification:
+    """Take the staff member's unused OTP verification for this request, or refuse the issue (HTTP 428).
+    It is marked used in the caller's transaction, so an issue that fails leaves it usable."""
+    now = datetime.now(UTC).replace(tzinfo=None)
+    verification = (
+        db.query(LeaseHandoverVerification)
+        .filter(
+            LeaseHandoverVerification.lease_request_id == lease.id,
+            LeaseHandoverVerification.verified_by == current_user.id,
+            LeaseHandoverVerification.used_at.is_(None),
+            LeaseHandoverVerification.expires_at > now,
+        )
+        .order_by(LeaseHandoverVerification.verified_at)
+        .with_for_update()
+        .first()
+    )
+    if not verification:
+        raise HTTPException(status_code=428, detail=HANDOVER_OTP_REQUIRED_DETAIL)
+    verification.used_at = now
+    return verification
 
 
 def lease_devices(db: Session, lease: LeaseRequest, lines: list[dict], current_user: User) -> None:
