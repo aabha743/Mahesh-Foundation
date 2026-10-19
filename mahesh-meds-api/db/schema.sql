@@ -243,6 +243,21 @@ CREATE TABLE lease_items (
   INDEX idx_items_due (due_date)
 );
 
+-- One row per OTP the collecting person confirmed at a device handover (migration 004).
+CREATE TABLE lease_handover_verifications (
+  id CHAR(36) PRIMARY KEY DEFAULT (UUID()),
+  lease_request_id CHAR(36) NOT NULL,
+  center_id CHAR(36),
+  verified_by CHAR(36),
+  verified_at DATETIME NOT NULL,
+  expires_at DATETIME NOT NULL,
+  used_at DATETIME NULL,
+  FOREIGN KEY (lease_request_id) REFERENCES lease_requests(id) ON DELETE CASCADE,
+  FOREIGN KEY (center_id) REFERENCES centers(id) ON DELETE SET NULL,
+  FOREIGN KEY (verified_by) REFERENCES users(id) ON DELETE SET NULL,
+  INDEX idx_handover_request_user (lease_request_id, verified_by)
+);
+
 -- ============================================
 -- 13. LEASE EXTENSIONS
 -- ============================================

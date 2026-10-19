@@ -240,6 +240,19 @@ class LeaseItem(Base):
     sku: Mapped[SKU] = relationship("SKU")
 
 
+# An OTP the collecting person confirmed at the counter; lets verified_by issue devices for the request once.
+class LeaseHandoverVerification(Base):
+    __tablename__ = "lease_handover_verifications"
+
+    id: Mapped[str] = mapped_column(CHAR(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    lease_request_id: Mapped[str] = mapped_column(CHAR(36), ForeignKey("lease_requests.id"), nullable=False)
+    center_id: Mapped[str | None] = mapped_column(CHAR(36), ForeignKey("centers.id"))
+    verified_by: Mapped[str | None] = mapped_column(CHAR(36), ForeignKey("users.id"))
+    verified_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime)
+
+
 # Public lease extension requests reviewed by staff.
 class LeaseExtension(Base):
     __tablename__ = "lease_extensions"

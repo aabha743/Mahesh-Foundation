@@ -2,7 +2,7 @@
 import secrets
 import unittest
 import uuid
-from datetime import datetime, UTC
+from datetime import datetime, UTC, timedelta
 
 from fastapi.testclient import TestClient
 
@@ -10,7 +10,20 @@ from app.database import SessionLocal
 from app.main import app
 from app.permissions import invalidate_permission_cache
 from app.security import TRACK_COOKIE, create_access_token, create_track_token
-from app.models import Asset, AuditLog, Center, LeaseItem, LeaseRequest, NotificationLog, Role, SKU, SKUBlock, User
+from app.models import (
+    Asset,
+    AuditLog,
+    Center,
+    LeaseHandoverVerification,
+    LeaseItem,
+    LeaseRequest,
+    NotificationLog,
+    OTPSession,
+    Role,
+    SKU,
+    SKUBlock,
+    User,
+)
 
 CSRF = "test-csrf-token"
 NO_HOLD = object()
@@ -56,6 +69,8 @@ class LeaseApiTestCase(unittest.TestCase):
             db.query(NotificationLog).filter(NotificationLog.reference_id == lease_id).delete()
             db.query(SKUBlock).filter(SKUBlock.lease_request_id == lease_id).delete()
             db.query(LeaseItem).filter(LeaseItem.lease_request_id == lease_id).delete()
+            db.query(LeaseHandoverVerification).filter(LeaseHandoverVerification.lease_request_id == lease_id).delete()
+            db.query(OTPSession).filter(OTPSession.purpose == f"issue:{lease_id}").delete()
             db.query(AuditLog).filter(AuditLog.entity_id == lease_id).delete()
             db.query(LeaseRequest).filter(LeaseRequest.id == lease_id).delete()
         for asset_id in cls.asset_ids:
@@ -163,6 +178,17 @@ class LeaseApiTestCase(unittest.TestCase):
     def verified_client(self, mobile: str) -> TestClient:
         """A browser that verified `mobile` by OTP (has a tracking session), as the public status page does."""
         return TestClient(app, cookies={TRACK_COOKIE: create_track_token(mobile)})
+
+    def confirm_handover(self, user: User, lease: LeaseRequest, minutes: int = 30) -> LeaseHandoverVerification:
+        """Record that `user` entered the requester's OTP at the counter, as POST .../handover/verify-otp does."""
+        now = utcnow()
+        verification = LeaseHandoverVerification(
+            lease_request_id=lease.id, center_id=user.center_id, verified_by=user.id,
+            verified_at=now, expires_at=now + timedelta(minutes=minutes),
+        )
+        self.db.add(verification)
+        self.db.commit()
+        return verification
 
     def patch_as(self, user: User, lease: LeaseRequest, body: dict):
         client = TestClient(app, cookies={"access_token": create_access_token(user.id), "csrf_token": CSRF})

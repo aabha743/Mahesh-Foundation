@@ -406,6 +406,31 @@ export function needsOtp(error: unknown): boolean {
   return error instanceof ApiError && error.status === 401;
 }
 
+/** Device handover: text an OTP to the request's mobile, for the person collecting the devices to read out. */
+export async function sendHandoverOtp(leaseId: string, centerId: string): Promise<TrackOtpSent> {
+  return apiFetch(`/api/v1/lease-requests/${encodeURIComponent(leaseId)}/handover/send-otp`, {
+    method: "POST",
+    body: JSON.stringify({ center_id: centerId }),
+  });
+}
+
+/** Check the code read out at the counter; if right, this user may issue devices for the request once, within 30 minutes. */
+export async function verifyHandoverOtp(
+  leaseId: string,
+  centerId: string,
+  otp: string,
+): Promise<{ verified: boolean; expires_in: number }> {
+  return apiFetch(`/api/v1/lease-requests/${encodeURIComponent(leaseId)}/handover/verify-otp`, {
+    method: "POST",
+    body: JSON.stringify({ center_id: centerId, otp }),
+  });
+}
+
+/** True when an issue was refused because the requester's OTP has not been entered (or was already used / lapsed). */
+export function needsHandoverOtp(error: unknown): boolean {
+  return error instanceof ApiError && error.status === 428;
+}
+
 export async function listLeaseExtensions(status?: string): Promise<LeaseExtension[]> {
   const query = status ? `?status=${encodeURIComponent(status)}` : "";
   return apiFetch(`/api/v1/lease-extensions${query}`);

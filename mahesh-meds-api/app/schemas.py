@@ -348,6 +348,15 @@ class TrackOtpVerify(TrackOtpRequest):
     otp: str = Field(min_length=4, max_length=10)
 
 
+# --- Device handover (OTP read out by the person collecting the devices) ---
+class HandoverOtpRequest(BaseModel):
+    center_id: str = Field(min_length=1, max_length=36)  # the center issuing the devices
+
+
+class HandoverOtpVerify(HandoverOtpRequest):
+    otp: str = Field(min_length=4, max_length=10)
+
+
 # --- Staff login ---
 class OTPRequest(BaseModel):
     mobile: str

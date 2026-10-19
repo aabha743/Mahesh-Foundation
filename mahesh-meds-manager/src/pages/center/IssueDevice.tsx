@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Search, CheckCircle, AlertTriangle, Printer } from "lucide-react";
+import { Search, CheckCircle, AlertTriangle, Printer, ShieldCheck } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
@@ -8,12 +8,14 @@ import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useCenterScope } from "@/hooks/useCenterScope";
-import { apiFetch } from "@/lib/api";
+import { apiFetch, needsHandoverOtp, sendHandoverOtp, verifyHandoverOtp } from "@/lib/api";
 import { toast } from "sonner";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { SerialNumberInput } from "@/components/SerialNumberInput";
+import { OtpVerifyCard } from "@/components/OtpVerifyCard";
+import { mobileFromSearch } from "@/lib/mobileSearch";
 
-const steps = ["Find Request", "Assign Assets", "Confirm & Issue"];
+const steps = ["Find Request", "Verify Recipient", "Assign Assets", "Confirm & Issue"];
 
 type SkuRow = { id: string; name: string };
 type AssetRow = {
@@ -52,6 +54,10 @@ function hasPendingLeaseLines(lease: LeaseLookup): boolean {
   return lease.skus.length > 0;
 }
 
+function isReadyToIssue(lease: LeaseLookup): boolean {
+  return lease.status === "approved" || (lease.status === "active" && hasPendingLeaseLines(lease));
+}
+
 export default function IssueDevice() {
   const { centerId, centerName } = useCenterScope();
   const [step, setStep] = useState(0);
@@ -68,6 +74,10 @@ export default function IssueDevice() {
   const [itemUnavailable, setItemUnavailable] = useState<Record<string, boolean>>({});
   /** False when every pending line belongs to some other center. */
   const [canIssueLocally, setCanIssueLocally] = useState(true);
+  /** A mobile number's requests that are ready to issue, when there is more than one to choose from. */
+  const [choices, setChoices] = useState<LeaseLookup[]>([]);
+  /** The request whose OTP this user entered; the server lets them issue against it once, within 30 minutes. */
+  const [verifiedLeaseId, setVerifiedLeaseId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!centerId) return;
@@ -102,13 +112,45 @@ export default function IssueDevice() {
       )
     : [];
 
-  const handleFindRequest = async (tokenOverride?: string) => {
-    const t = (tokenOverride ?? token).trim();
-    if (!t) {
-      setTokenError("Enter a token");
+  const handleFindRequest = async () => {
+    const query = token.trim();
+    setChoices([]);
+    if (!query) {
+      setTokenError("Enter a token or the requester's mobile number");
       setLease(null);
       return;
     }
+    const mobile = mobileFromSearch(query);
+    if (mobile === null) {
+      await loadLease(query);
+      return;
+    }
+    setLease(null);
+    if (!mobile) {
+      setTokenError("Enter a valid 10-digit mobile number or a token");
+      return;
+    }
+    try {
+      const found = await apiFetch<LeaseLookup[]>(`/api/v1/lease-requests/by-mobile/${mobile}`);
+      const ready = found.filter(isReadyToIssue);
+      if (ready.length === 1) {
+        await loadLease(ready[0]!.token_number);
+      } else if (ready.length > 1) {
+        setTokenError("");
+        setChoices(ready);
+      } else if (found.length > 0) {
+        const summary = found.map((r) => `${r.token_number} (${r.status})`).join(", ");
+        setTokenError(`No request for this number is ready to issue: ${summary}.`);
+      } else {
+        setTokenError("No lease request found for this mobile number.");
+      }
+    } catch {
+      setTokenError("Could not look up this mobile number. Please try again.");
+    }
+  };
+
+  const loadLease = async (t: string) => {
+    setChoices([]);
     try {
       const found = await apiFetch<LeaseLookup>(`/api/v1/lease-requests/by-token/${encodeURIComponent(t)}`);
       let issueContext: LeaseIssueContext | null = null;
@@ -129,6 +171,7 @@ export default function IssueDevice() {
       }
       setLease(found);
       setTokenError("");
+      if (found.id !== verifiedLeaseId) setVerifiedLeaseId(null);
       const nextSerials: Record<string, string> = {};
       const nextStatus: Record<string, "valid" | "invalid" | ""> = {};
       const nextIds: Record<string, string> = {};
@@ -286,9 +329,14 @@ export default function IssueDevice() {
         }),
       );
       setIssued(true);
+      setVerifiedLeaseId(null);
       toast.success("Issue recorded");
     } catch (error) {
       toast.error(error instanceof Error && error.message ? error.message : "Failed to complete issue");
+      if (needsHandoverOtp(error)) {
+        setVerifiedLeaseId(null);
+        setStep(1);
+      }
     } finally {
       setSubmitting(false);
     }
@@ -314,12 +362,41 @@ export default function IssueDevice() {
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="flex flex-col sm:flex-row gap-2">
-              <Input placeholder="Enter Lease Token" value={token} onChange={(e) => setToken(e.target.value)} />
+              <Input
+                placeholder="Token or requester's mobile number"
+                aria-label="Token or requester's mobile number"
+                value={token}
+                onChange={(e) => setToken(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") void handleFindRequest();
+                }}
+              />
               <Button onClick={() => void handleFindRequest()}>
                 <Search className="h-4 w-4 mr-1" /> Find
               </Button>
             </div>
             {tokenError && <p className="text-sm text-destructive">{tokenError}</p>}
+            {choices.length > 0 && (
+              <div className="space-y-2">
+                <p className="text-sm text-muted-foreground">
+                  This number has {choices.length} requests ready to issue. Choose one:
+                </p>
+                {choices.map((choice) => (
+                  <button
+                    key={choice.id}
+                    type="button"
+                    className="w-full text-left border rounded-lg p-3 hover:bg-muted/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    onClick={() => {
+                      setToken(choice.token_number);
+                      void loadLease(choice.token_number);
+                    }}
+                  >
+                    <span className="font-mono font-medium">{choice.token_number}</span>
+                    <span className="text-sm text-muted-foreground"> · {choice.requestor_name} · {choice.skus.join(", ")}</span>
+                  </button>
+                ))}
+              </div>
+            )}
             {lease && (
               <div className="border rounded-lg p-4 space-y-3">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm">
@@ -371,8 +448,11 @@ export default function IssueDevice() {
                     issued from the center where it is already available.
                   </p>
                 )}
-                <Button onClick={() => setStep(1)} disabled={!canEnterIssueFlow || !canIssueLocally}>
-                  Proceed to Asset Scan
+                <Button
+                  onClick={() => setStep(verifiedLeaseId === lease.id ? 2 : 1)}
+                  disabled={!canEnterIssueFlow || !canIssueLocally}
+                >
+                  {verifiedLeaseId === lease.id ? "Proceed to Asset Scan" : "Continue to OTP check"}
                 </Button>
               </div>
             )}
@@ -380,10 +460,50 @@ export default function IssueDevice() {
         </Card>
       )}
 
-      {!issued && step === 1 && lease && (
+      {!issued && step === 1 && lease && centerId && (
+        <div className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Step 2: Verify Recipient</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-1 text-sm">
+              <p>
+                <span className="text-muted-foreground">Token:</span> <span className="font-mono">{lease.token_number}</span>
+              </p>
+              <p>
+                <span className="text-muted-foreground">Requester:</span> {lease.requestor_name}
+              </p>
+              <p className="text-muted-foreground pt-2">
+                Devices are handed over only to the person approved to receive them. One OTP covers this handover for
+                30 minutes.
+              </p>
+            </CardContent>
+          </Card>
+          <OtpVerifyCard
+            title="OTP to the requester's mobile"
+            intro={`We'll text a one-time password (OTP) to the requester's mobile ending ${lease.mobile.slice(-2)}. Ask the person collecting the devices to read it out.`}
+            sentText={(sentTo) =>
+              `Enter the 6-digit OTP sent to the mobile ${sentTo}, as read out by the person collecting the devices.`
+            }
+            onSend={() => sendHandoverOtp(lease.id, centerId)}
+            onVerify={(otp) => verifyHandoverOtp(lease.id, centerId, otp)}
+            onVerified={() => {
+              setVerifiedLeaseId(lease.id);
+              toast.success("Recipient verified");
+              setStep(2);
+            }}
+            resetKey={lease.id}
+          />
+          <Button variant="outline" onClick={() => setStep(0)}>
+            Back
+          </Button>
+        </div>
+      )}
+
+      {!issued && step === 2 && lease && (
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">Step 2: Assign Assets</CardTitle>
+            <CardTitle className="text-base">Step 3: Assign Assets</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
             {requestedItems.map((item) => {
@@ -459,7 +579,7 @@ export default function IssueDevice() {
               <Button variant="outline" onClick={() => setStep(0)}>
                 Back
               </Button>
-              <Button onClick={() => setStep(2)} disabled={!allValid || localPendingItems.length === 0}>
+              <Button onClick={() => setStep(3)} disabled={!allValid || localPendingItems.length === 0}>
                 Verify All Assets
               </Button>
             </div>
@@ -467,10 +587,10 @@ export default function IssueDevice() {
         </Card>
       )}
 
-      {!issued && step === 2 && lease && (
+      {!issued && step === 3 && lease && (
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">Step 3: Confirm & Issue</CardTitle>
+            <CardTitle className="text-base">Step 4: Confirm & Issue</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="overflow-x-auto">
@@ -498,9 +618,12 @@ export default function IssueDevice() {
               <p>
                 <span className="text-muted-foreground">Issue Date:</span> {new Date().toLocaleDateString("en-IN")}
               </p>
+              <p className="flex items-center gap-1 text-success">
+                <ShieldCheck className="h-4 w-4" /> Recipient verified by OTP
+              </p>
             </div>
             <div className="flex flex-col sm:flex-row gap-2">
-              <Button variant="outline" onClick={() => setStep(1)}>
+              <Button variant="outline" onClick={() => setStep(2)}>
                 Back
               </Button>
               <Button
@@ -550,6 +673,8 @@ export default function IssueDevice() {
                   setAssetIds({});
                   setIssued(false);
                   setCanIssueLocally(true);
+                  setChoices([]);
+                  setVerifiedLeaseId(null);
                 }}
               >
                 Issue Another
