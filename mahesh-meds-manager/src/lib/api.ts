@@ -50,32 +50,47 @@ function buildHeaders(init?: ApiFetchOptions): Record<string, string> {
   return headers;
 }
 
+/** An API error with its HTTP status, so callers can tell e.g. "verify with OTP" (401) from other failures. */
+export class ApiError extends Error {
+  constructor(
+    public readonly status: number,
+    message: string,
+  ) {
+    super(message);
+    this.name = "ApiError";
+  }
+}
+
 /**
  * Global error handler for API responses.
- * - 401: User not authenticated, redirect to login (unless skipAuthRedirect is true)
+ * - 401: User not authenticated, redirect to login (unless skipAuthRedirect is true);
+ *   for public requests it means "verify with OTP" and is simply thrown
  * - 403: Permission denied, show error toast
  */
-function handleApiError(response: Response, errorText: string, skipAuthRedirect?: boolean): never {
+function handleApiError(response: Response, errorText: string, init?: ApiFetchOptions): never {
   if (response.status === 401) {
+    if (init?.publicRequest) {
+      throw new ApiError(401, errorText || "Please verify with the OTP first.");
+    }
     // Only redirect if this isn't an auth check call
     // Auth check calls (like /me) should fail silently on 401
-    if (!skipAuthRedirect) {
+    if (!init?.skipAuthRedirect) {
       window.location.href = "/login";
     }
-    throw new Error("Session expired. Please log in again.");
+    throw new ApiError(401, "Session expired. Please log in again.");
   }
 
   if (response.status === 403) {
     toast.error("You don't have permission to perform this action");
-    throw new Error(errorText || "Permission denied");
+    throw new ApiError(403, errorText || "Permission denied");
   }
 
   if (response.status >= 500) {
     toast.error("Something went wrong. Please try again.");
-    throw new Error(errorText || "Server error");
+    throw new ApiError(response.status, errorText || "Server error");
   }
 
-  throw new Error(errorText || `Request failed with status ${response.status}`);
+  throw new ApiError(response.status, errorText || `Request failed with status ${response.status}`);
 }
 
 function extractErrorMessage(errorText: string): string {
@@ -100,6 +115,8 @@ function extractErrorMessage(errorText: string): string {
  */
 interface ApiFetchOptions extends RequestInit {
   skipAuthRedirect?: boolean; // Don't redirect to login on 401 (for auth checks)
+  /** Public page call: a 401 means "verify with OTP", so no staff-session refresh or login redirect. */
+  publicRequest?: boolean;
 }
 
 /**
@@ -132,7 +149,7 @@ export async function apiFetch<T>(
   }
 
   // Handle 401 by attempting token refresh (except for auth endpoints)
-  if (response.status === 401 && !path.includes("/auth/")) {
+  if (response.status === 401 && !path.includes("/auth/") && !init?.publicRequest) {
     // Try to refresh
     const refreshHeaders = buildHeaders({ method: "POST" });
     const refreshed = await fetch(`${API_BASE_URL}/auth/refresh`, {
@@ -161,7 +178,7 @@ export async function apiFetch<T>(
 
   if (!response.ok) {
     const errorText = extractErrorMessage(await response.text());
-    handleApiError(response, errorText, init?.skipAuthRedirect);
+    handleApiError(response, errorText, init);
   }
 
   // Handle empty responses (e.g., 204 No Content)
@@ -269,11 +286,9 @@ export interface LeaseRequestTokenLookup {
   }>;
 }
 
+/** Name, mobile and Aadhaar come from the lease on the server (the mobile was verified by OTP). */
 export interface LeaseExtensionCreatePayload {
   token_number: string;
-  requestor_name: string;
-  mobile: string;
-  aadhar_number: string;
   requested_due_date: string;
   requested_duration?: string;
   reason?: string;
@@ -349,20 +364,46 @@ export async function refreshToken(): Promise<{ message: string; csrf_token: str
   });
 }
 
+/** Public lookups need a tracking session (OTP) unless staff are logged in; a 401 ApiError means "verify first". */
 export async function getLeaseRequestByToken(token: string): Promise<LeaseRequestTokenLookup> {
-  return apiFetch(`/api/v1/lease-requests/by-token/${encodeURIComponent(token)}`);
+  return apiFetch(`/api/v1/lease-requests/by-token/${encodeURIComponent(token)}`, { publicRequest: true });
 }
 
 export async function getLeaseRequestsByMobile(mobile: string): Promise<LeaseRequestTokenLookup[]> {
-  return apiFetch(`/api/v1/lease-requests/by-mobile/${encodeURIComponent(mobile)}`);
+  return apiFetch(`/api/v1/lease-requests/by-mobile/${encodeURIComponent(mobile)}`, { publicRequest: true });
 }
 
 export async function createLeaseExtension(payload: LeaseExtensionCreatePayload): Promise<LeaseExtension> {
   return apiFetch("/api/v1/lease-extensions", {
     method: "POST",
     body: JSON.stringify(payload),
-    skipAuthRedirect: true,
+    publicRequest: true,
   });
+}
+
+export interface TrackOtpSent {
+  sent_to: string; // e.g. "ending 10"
+  expires_in: number;
+  resend_in: number;
+}
+
+/** Text an OTP to the mobile on the request (token) or to the number entered. */
+export async function sendTrackOtp(query: string): Promise<TrackOtpSent> {
+  return apiFetch("/api/v1/track/send-otp", { method: "POST", body: JSON.stringify({ query }), publicRequest: true });
+}
+
+/** Check the OTP; on success the browser gets a 30-minute tracking session (HttpOnly cookie). */
+export async function verifyTrackOtp(query: string, otp: string): Promise<{ verified: boolean; expires_in: number }> {
+  return apiFetch("/api/v1/track/verify-otp", { method: "POST", body: JSON.stringify({ query, otp }), publicRequest: true });
+}
+
+export async function endTrackSession(): Promise<void> {
+  await apiFetch("/api/v1/track/logout", { method: "POST", publicRequest: true });
+}
+
+/** True when an API call failed only because the browser has not verified the number by OTP yet. */
+export function needsOtp(error: unknown): boolean {
+  return error instanceof ApiError && error.status === 401;
 }
 
 export async function listLeaseExtensions(status?: string): Promise<LeaseExtension[]> {

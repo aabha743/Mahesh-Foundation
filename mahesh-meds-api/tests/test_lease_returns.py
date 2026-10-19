@@ -118,7 +118,7 @@ class LeaseReturnTests(support.LeaseApiTestCase):
         lease, (first, second) = self.issued_lease()
         self.post_return(lease, [first])
 
-        items = self.client.get(f"/api/v1/lease-requests/by-token/{lease.token_number}").json()["items"]
+        items = self.verified_client(lease.mobile).get(f"/api/v1/lease-requests/by-token/{lease.token_number}").json()["items"]
 
         returned = {item["asset_id"]: item["returned_at"] for item in items}
         self.assertIsNotNone(returned[first.id])

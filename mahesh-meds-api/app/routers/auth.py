@@ -7,9 +7,8 @@ from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response
 from sqlalchemy.orm import Session, joinedload
 
 from app.database import get_db
-from app.models import User, Role, OTPSession, RefreshToken
+from app.models import User, Role, RefreshToken
 from app.schemas import OTPRequest, OTPVerify, MeResponse
-from app.services.sms import send_template_sms
 from app.security import (
     ACCESS_TOKEN_EXPIRE_MINUTES,
     MAX_OTP_ATTEMPTS,
@@ -22,15 +21,13 @@ from app.security import (
     csrf_cookie_options,
     decode_access_token,
     generate_csrf_token,
-    generate_otp,
     generate_refresh_token,
-    hash_otp,
     hash_token,
-    verify_otp_hash,
     verify_token_hash,
 )
 from app.permissions import get_current_user
 from app.audit import write_audit_log
+from app.otp import OtpCheckFailed, check_otp, in_cooldown, send_otp
 
 router = APIRouter()
 
@@ -96,16 +93,8 @@ def request_otp(payload: OTPRequest, request: Request, db: Session = Depends(get
     if not user:
         raise HTTPException(status_code=400, detail="Invalid mobile number or account inactive")
 
-    # Enforce cooldown: check for unused, unexpired OTP created in last 60 seconds
-    cooldown_cutoff = datetime.now(UTC) - timedelta(seconds=OTP_COOLDOWN_SECONDS)
-    recent_otp = db.query(OTPSession).filter(
-        OTPSession.mobile == payload.mobile,
-        OTPSession.purpose == purpose,
-        OTPSession.is_used == False,
-        OTPSession.expires_at > datetime.now(UTC),
-        OTPSession.created_at >= cooldown_cutoff
-    ).first()
-    if recent_otp:
+    # Enforce cooldown: an unused code was sent in the last 60 seconds
+    if in_cooldown(db, payload.mobile, purpose):
         audit_otp_event(
             db,
             request,
@@ -117,31 +106,11 @@ def request_otp(payload: OTPRequest, request: Request, db: Session = Depends(get
         db.commit()
         raise HTTPException(status_code=429, detail="Please wait 60 seconds before requesting a new OTP")
 
-    # Generate 6-digit OTP and hash it
-    otp = generate_otp()
-    otp_hash = hash_otp(otp)
-
-    # Insert into otp_sessions
+    # Create the code (stored hashed) and text it; the SMS log shows it masked
     expires_at = datetime.now(UTC) + timedelta(minutes=OTP_EXPIRE_MINUTES)
-    otp_session = OTPSession(
-        mobile=payload.mobile,
-        otp_code=otp_hash,
-        purpose=purpose,
-        expires_at=expires_at,
-        user_agent=request.headers.get("user-agent")
-    )
-    db.add(otp_session)
-    db.commit()
-
-    delivery_ok = send_template_sms(
-        mobile=payload.mobile,
-        event_name="otp_login",
-        variables={"otp": otp},
-        db=db,
-    )
+    delivery_ok = send_otp(db, request, payload.mobile, purpose)
     sms_enabled_check = os.getenv("SMS_ENABLED", "true").lower() == "true"
-    if not delivery_ok and sms_enabled_check:
-        otp_session.is_used = True
+    if not delivery_ok:
         audit_otp_event(
             db,
             request,
@@ -180,7 +149,7 @@ def request_otp(payload: OTPRequest, request: Request, db: Session = Depends(get
 def verify_otp(payload: OTPVerify, request: Request, response: Response, db: Session = Depends(get_db)):
     """
     Verify OTP and issue JWT tokens.
-    Looks up latest unused, unexpired OTP, increments attempts, blocks if >= 5 attempts.
+    Checks the latest unused, unexpired OTP (app/otp.py: 5 wrong tries cancel it).
     On success: marks OTP used, generates JWT access token and opaque refresh token,
     sets HttpOnly cookies, stores refresh token hash in DB.
     """
@@ -188,61 +157,22 @@ def verify_otp(payload: OTPVerify, request: Request, response: Response, db: Ses
     if purpose not in OTP_PURPOSES:
         raise HTTPException(status_code=400, detail="Unsupported OTP purpose")
 
-    # Look up latest unused, unexpired OTP session
-    otp_session = db.query(OTPSession).filter(
-        OTPSession.mobile == payload.mobile,
-        OTPSession.purpose == purpose,
-        OTPSession.is_used == False,
-        OTPSession.expires_at > datetime.now(UTC)
-    ).order_by(OTPSession.created_at.desc()).first()
-
-    if not otp_session:
+    # Check the code: the 5th wrong try cancels it (app/otp.py)
+    try:
+        check_otp(db, payload.mobile, purpose, payload.otp)
+    except OtpCheckFailed as failure:
+        details = {"reason": failure.reason, "purpose": purpose}
+        if failure.attempts is not None:
+            details.update(attempts=failure.attempts, remaining_attempts=MAX_OTP_ATTEMPTS - failure.attempts)
         audit_otp_event(
             db,
             request,
-            action="otp_verification_failed",
+            action="otp_locked_out" if failure.reason == "max_attempts_reached" else "otp_verification_failed",
             mobile=payload.mobile,
-            details={"reason": "expired_or_invalid_session", "purpose": purpose},
+            details=details,
         )
         db.commit()
-        raise HTTPException(status_code=400, detail="OTP expired or invalid")
-
-    # Increment attempts
-    otp_session.attempts += 1
-    db.commit()
-
-    # Block if attempts >= 5
-    if otp_session.attempts >= MAX_OTP_ATTEMPTS:
-        otp_session.is_used = True
-        audit_otp_event(
-            db,
-            request,
-            action="otp_locked_out",
-            mobile=payload.mobile,
-            details={"attempts": otp_session.attempts, "reason": "max_attempts_reached", "purpose": purpose},
-        )
-        db.commit()
-        raise HTTPException(status_code=429, detail="Too many failed attempts. Please request a new OTP.")
-
-    # Verify OTP against stored hash
-    if not verify_otp_hash(payload.otp, otp_session.otp_code):
-        audit_otp_event(
-            db,
-            request,
-            action="otp_verification_failed",
-            mobile=payload.mobile,
-            details={
-                "reason": "invalid_otp",
-                "attempts": otp_session.attempts,
-                "remaining_attempts": MAX_OTP_ATTEMPTS - otp_session.attempts,
-                "purpose": purpose,
-            },
-        )
-        db.commit()
-        raise HTTPException(status_code=401, detail="Invalid OTP")
-
-    # Success: mark OTP as used
-    otp_session.is_used = True
+        raise HTTPException(status_code=failure.status_code, detail=failure.detail) from None
 
     # Get user
     user = db.query(User).filter(User.mobile == payload.mobile, User.is_active == True).first()

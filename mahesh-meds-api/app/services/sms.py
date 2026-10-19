@@ -281,14 +281,17 @@ def send_sms(
     db: Session,
     event_name: str | None = None,
     reference_id: str | None = None,
+    log_message: str | None = None,
 ) -> bool:
+    """Send one SMS and log the attempt. log_message, if given, is what the log stores instead of the text sent."""
     sms_type = event_name or template_id
+    log_text = message if log_message is None else log_message
     try:
         formatted_mobile = format_mobile(mobile)
     except ValueError:
         log_sms_attempt(
             recipient_mobile=mobile,
-            message=message,
+            message=log_text,
             sms_type=sms_type,
             reference_id=reference_id,
             status="failed",
@@ -301,7 +304,7 @@ def send_sms(
     if not is_enabled:
         log_sms_attempt(
             recipient_mobile=formatted_mobile,
-            message=message,
+            message=log_text,
             sms_type=sms_type,
             reference_id=reference_id,
             status="skipped",
@@ -313,7 +316,7 @@ def send_sms(
     if not template_id:
         log_sms_attempt(
             recipient_mobile=formatted_mobile,
-            message=message,
+            message=log_text,
             sms_type=sms_type,
             reference_id=reference_id,
             status="failed",
@@ -325,7 +328,7 @@ def send_sms(
     if not SMS_API_KEY or not SMS_USERNAME:
         log_sms_attempt(
             recipient_mobile=formatted_mobile,
-            message=message,
+            message=log_text,
             sms_type=sms_type,
             reference_id=reference_id,
             status="failed",
@@ -352,7 +355,7 @@ def send_sms(
     except httpx.HTTPError as exc:
         log_sms_attempt(
             recipient_mobile=formatted_mobile,
-            message=message,
+            message=log_text,
             sms_type=sms_type,
             reference_id=reference_id,
             status="failed",
@@ -364,7 +367,7 @@ def send_sms(
     if "MessageId-" in response_text:
         log_sms_attempt(
             recipient_mobile=formatted_mobile,
-            message=message,
+            message=log_text,
             sms_type=sms_type,
             reference_id=reference_id,
             status="sent",
@@ -375,7 +378,7 @@ def send_sms(
 
     log_sms_attempt(
         recipient_mobile=formatted_mobile,
-        message=message,
+        message=log_text,
         sms_type=sms_type,
         reference_id=reference_id,
         status="failed",
@@ -409,7 +412,9 @@ def send_template_sms(
     variables: dict,
     db: Session,
     reference_id: str | None = None,
+    secret_variables: tuple[str, ...] = (),
 ) -> bool:
+    """Send the SMS for event_name; variables named in secret_variables (e.g. an OTP) are masked in the log."""
     template = get_template(event_name, db)
     if not template:
         logger.warning("SMS template missing or inactive for event '%s'", event_name)
@@ -425,6 +430,7 @@ def send_template_sms(
         return False
 
     message = render_template(template.template_text, variables)
+    masked = {**variables, **{name: "******" for name in secret_variables}}
     return send_sms(
         mobile=mobile,
         message=message,
@@ -432,4 +438,5 @@ def send_template_sms(
         db=db,
         event_name=event_name,
         reference_id=reference_id,
+        log_message=render_template(template.template_text, masked) if secret_variables else None,
     )

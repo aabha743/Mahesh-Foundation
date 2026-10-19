@@ -3,7 +3,7 @@ returns, extensions and pickup guidance."""
 
 import os
 import re
-from datetime import date, datetime, UTC, timedelta
+from datetime import date, datetime, UTC, timedelta, timezone
 
 from fastapi import HTTPException
 from sqlalchemy import func, select, text
@@ -97,6 +97,17 @@ def compute_due_date(expected_duration: str | None, issued_at: datetime | None =
 
 # Expected durations a request can ask for (the public form offers exactly these).
 REQUEST_DURATIONS = ("1 Week", "2 Weeks", "3 Weeks", "4 Weeks")
+
+INDIA_TIME = timezone(timedelta(hours=5, minutes=30))  # no daylight saving, so a fixed offset is exact
+MONTH_CODES = ("JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC")
+
+
+def next_token_number(db: Session, now: datetime | None = None) -> str:
+    """Token for a new request, e.g. MF-AUG-0001: the month of the request in India time, then a number
+    from the lease_token_seq counter (migration 003), which never resets and never repeats."""
+    number = db.execute(text("SELECT NEXT VALUE FOR lease_token_seq")).scalar_one()
+    month = MONTH_CODES[(now or datetime.now(UTC)).astimezone(INDIA_TIME).month - 1]
+    return f"MF-{month}-{number:04d}"
 
 EXTENSION_DURATION_DAYS = {
     "3 days": 3,

@@ -9,14 +9,16 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import User, LeaseRequest, LeaseExtension
 from app.schemas import LeaseExtensionCreate, LeaseExtensionOut, LeaseExtensionReview
-from app.security import validate_csrf
+from app.security import get_track_mobile, validate_csrf
 from app.permissions import (
     enforce_center_resource_access,
+    ensure_can_view_request,
+    get_optional_user,
     is_center_scoped_operator,
     require_any_permission,
     require_extension_review_permission,
 )
-from app.leasing import active_lease_items, evaluate_extension_eligibility, normalize_person_name
+from app.leasing import active_lease_items, evaluate_extension_eligibility
 from app.audit import write_audit_log
 
 router = APIRouter()
@@ -27,8 +29,11 @@ def create_lease_extension(
     payload: LeaseExtensionCreate,
     request: Request,
     db: Session = Depends(get_db),
+    viewer: User | None = Depends(get_optional_user),
+    track_mobile: str | None = Depends(get_track_mobile),
 ):
-    """Public lease extension request endpoint validated against the existing lease token."""
+    """Extension request for a lease, from a browser that verified the lease's mobile by OTP (or staff).
+    Name, mobile and Aadhaar are taken from the lease; values sent by older forms are ignored."""
     if not payload.reason or not payload.reason.strip():
         raise HTTPException(status_code=400, detail="Reason for extension is required.")
 
@@ -40,12 +45,7 @@ def create_lease_extension(
     if not lease:
         raise HTTPException(status_code=404, detail="Lease request not found")
 
-    if lease.mobile != payload.mobile:
-        raise HTTPException(status_code=400, detail="Mobile number does not match this token")
-    if lease.aadhar_number != payload.aadhar_number:
-        raise HTTPException(status_code=400, detail="Aadhaar number does not match this token")
-    if normalize_person_name(lease.requestor_name) != normalize_person_name(payload.requestor_name):
-        raise HTTPException(status_code=400, detail="Requestor name does not match this token")
+    ensure_can_view_request(lease.mobile, viewer, track_mobile)
 
     if lease.due_date is None:
         raise HTTPException(status_code=400, detail="Cannot extend a lease without an existing due date")
@@ -75,9 +75,9 @@ def create_lease_extension(
         requested_days=requested_days,
         requested_due_date=requested_due_date,
         reason=payload.reason,
-        requestor_name=payload.requestor_name.strip(),
-        mobile=payload.mobile,
-        aadhar_number=payload.aadhar_number,
+        requestor_name=lease.requestor_name,
+        mobile=lease.mobile,
+        aadhar_number=lease.aadhar_number,
         current_due_date=lease.due_date,
     )
     db.add(extension)

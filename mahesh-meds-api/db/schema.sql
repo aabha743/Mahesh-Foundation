@@ -208,6 +208,9 @@ CREATE TABLE lease_requests (
   INDEX idx_lease_due (due_date)
 );
 
+-- Numbers request tokens: MF-<month>-<number>, never reset (migration 003).
+CREATE SEQUENCE IF NOT EXISTS lease_token_seq START WITH 1 INCREMENT BY 1 MINVALUE 1 NOCACHE;
+
 -- ============================================
 -- 12. LEASE ITEMS
 -- ============================================

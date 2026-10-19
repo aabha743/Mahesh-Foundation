@@ -186,13 +186,12 @@ export default function LeaseRequestForm() {
       return;
     }
 
-    const token = "MDF-" + Math.random().toString(36).substring(2, 8).toUpperCase();
     setIsSubmitting(true);
     try {
-      await apiFetch("/api/v1/lease-requests", {
+      // The server issues the token (MF-<month>-<number>).
+      const created = await apiFetch<{ token_number: string }>("/api/v1/lease-requests", {
         method: "POST",
         body: JSON.stringify({
-          token_number: token,
           requestor_name: formData.name.trim(),
           mobile: formData.mobile.trim(),
           aadhar_number: formData.aadhar.replace(/\s/g, ""),
@@ -203,11 +202,10 @@ export default function LeaseRequestForm() {
           preferred_center_id: formData.preferredCenterId,
           expected_duration: formData.duration,
           notes: formData.notes.trim() || null,
-          status: "pending",
           items: selectedItems,
         }),
       });
-      setSubmittedToken(token);
+      setSubmittedToken(created.token_number);
       setSubmitted(true);
     } catch {
       setErrors((prev) => ({ ...prev, submit: "Unable to submit request. Please try again." }));
@@ -233,7 +231,7 @@ export default function LeaseRequestForm() {
               <div className="bg-muted rounded-lg p-4">
                 <p className="text-sm text-muted-foreground">Your Token Number</p>
                 <p className="text-2xl font-bold font-mono text-primary mt-1">{submittedToken}</p>
-                <p className="text-xs text-muted-foreground mt-1">You can track later with this token number or your mobile number.</p>
+                <p className="text-xs text-muted-foreground mt-1">You can track it later with this token or your mobile number; we'll text an OTP to your mobile to confirm it's you.</p>
               </div>
               <div className="flex flex-col gap-2">
                 <Button onClick={() => navigate(`/status?token=${submittedToken}`)}>Track My Request</Button>

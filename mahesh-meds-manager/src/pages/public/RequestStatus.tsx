@@ -7,7 +7,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { PublicFooter, PublicHeader } from "@/components/PublicHeader";
-import { apiFetch, getLeaseRequestByToken, getLeaseRequestsByMobile, type LeaseRequestTokenLookup } from "@/lib/api";
+import { TrackOtpStep } from "@/components/TrackOtpStep";
+import { apiFetch, endTrackSession, getLeaseRequestByToken, getLeaseRequestsByMobile, needsOtp, type LeaseRequestTokenLookup } from "@/lib/api";
 import { emergencyContactText } from "@/lib/brand";
 
 type ExtensionHistoryEntry = {
@@ -182,6 +183,8 @@ export default function RequestStatus() {
   const [searched, setSearched] = useState(false);
   const [loading, setLoading] = useState(false);
   const [lastLookupMode, setLastLookupMode] = useState<LookupMode>("token");
+  // The token/number waiting for OTP verification before its requests can be shown.
+  const [otpFor, setOtpFor] = useState<string | null>(null);
 
   useEffect(() => {
     const tokenParam = searchParams.get("token");
@@ -200,6 +203,7 @@ export default function RequestStatus() {
     setSearched(true);
     setLoading(true);
     setLastLookupMode(lookupMode);
+    setOtpFor(null);
     try {
       const centers = await apiFetch<Array<{ id: string; name: string }>>("/api/v1/centers");
       const centerMap = Object.fromEntries(centers.map((center) => [center.id, center.name]));
@@ -218,12 +222,26 @@ export default function RequestStatus() {
         setMatches([mapped]);
         setResult(mapped);
       }
-    } catch {
+    } catch (error) {
       setMatches([]);
       setResult(null);
+      if (needsOtp(error)) {
+        // Not verified yet in this browser: ask for the OTP, then search again.
+        setSearched(false);
+        setOtpFor(normalizedQuery);
+      }
     } finally {
       setLoading(false);
     }
+  }
+
+  async function trackAnother() {
+    await endTrackSession().catch(() => undefined);
+    setQuery("");
+    setResult(null);
+    setMatches([]);
+    setSearched(false);
+    setOtpFor(null);
   }
 
   const cfg = result ? statusConfig[result.status] : null;
@@ -262,6 +280,25 @@ export default function RequestStatus() {
           </Button>
         </div>
 
+        {otpFor && (
+          <TrackOtpStep
+            query={otpFor}
+            onVerified={() => {
+              const verified = otpFor;
+              setOtpFor(null);
+              void doSearch(verified);
+            }}
+          />
+        )}
+
+        {result && (
+          <div className="flex justify-end">
+            <Button variant="link" className="h-auto p-0" onClick={() => void trackAnother()}>
+              Track another request
+            </Button>
+          </div>
+        )}
+
         {searched && !result && (
           <Card>
             <CardContent className="py-8 text-center text-muted-foreground">
@@ -297,7 +334,7 @@ export default function RequestStatus() {
                         <div>
                           <p className="font-mono text-sm font-semibold text-foreground">{match.token}</p>
                           <p className="text-sm text-muted-foreground">
-                            {match.requestorName} â€¢ Submitted {format(parseISO(match.submittedDate), "dd MMM yyyy")}
+                            {match.requestorName} • Submitted {format(parseISO(match.submittedDate), "dd MMM yyyy")}
                           </p>
                         </div>
                         <Badge variant="outline">{match.status}</Badge>

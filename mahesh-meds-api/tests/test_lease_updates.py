@@ -196,14 +196,14 @@ class LeaseUpdateApiTests(support.LeaseApiTestCase):
         issued = self.make_lease("issued", [self.make_asset(status="leased").id])
 
         for lease in (rejected, issued):
-            payload = self.client.get(f"/api/v1/lease-requests/by-token/{lease.token_number}").json()
+            payload = self.verified_client(lease.mobile).get(f"/api/v1/lease-requests/by-token/{lease.token_number}").json()
             self.assertEqual((payload["fulfillment_centers"], payload["fulfillment_message"]), ([], None), lease.status)
 
     def test_approved_request_keeps_pickup_guidance(self):
         self.make_asset()
         lease = self.make_lease("approved", [None])
 
-        payload = self.client.get(f"/api/v1/lease-requests/by-token/{lease.token_number}").json()
+        payload = self.verified_client(lease.mobile).get(f"/api/v1/lease-requests/by-token/{lease.token_number}").json()
 
         self.assertTrue(payload["fulfillment_message"])
         self.assertIn(self.center.id, [center["center_id"] for center in payload["fulfillment_centers"]])
