@@ -12,7 +12,7 @@ from app.audit import write_audit_log
 from app.database import get_db
 from app.leasing import normalize_public_tracking_mobile
 from app.models import AuditLog, LeaseRequest, OTPSession
-from app.otp import OtpCheckFailed, check_otp, in_cooldown, send_otp
+from app.otp import WRONG_CODES_DETAIL, OtpCheckFailed, check_otp, in_cooldown, send_otp, too_many_wrong_codes
 from app.schemas import TrackOtpRequest, TrackOtpVerify
 from app.security import (
     COOKIE_DOMAIN,
@@ -93,6 +93,8 @@ def send_tracking_otp(payload: TrackOtpRequest, request: Request, db: Session = 
 @router.post("/api/v1/track/verify-otp")
 def verify_tracking_otp(payload: TrackOtpVerify, request: Request, response: Response, db: Session = Depends(get_db)):
     """Check the OTP and start a 30-minute tracking session for that mobile number."""
+    if too_many_wrong_codes(db, request):
+        raise HTTPException(status_code=429, detail=WRONG_CODES_DETAIL)
     kind, mobile = resolve_query(db, payload.query)
     try:
         check_otp(db, mobile, OTP_PURPOSE, payload.otp.strip())
