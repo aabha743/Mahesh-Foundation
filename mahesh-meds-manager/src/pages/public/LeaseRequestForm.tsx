@@ -1,6 +1,6 @@
 import { useMemo, useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { CheckCircle, Plus, Minus, Search, X } from "lucide-react";
+import { CheckCircle, MapPin, Plus, Minus, Search, X } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -14,6 +14,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { ApiError, apiFetch } from "@/lib/api";
 import { RequiredMark } from "@/components/RequiredMark";
 import { AadharPhotoInput } from "@/components/AadharPhotoInput";
+import { centersWithStock, defaultPickupCenter, type StockRow } from "@/lib/pickupCenters";
 
 const durations = ["1 Week", "2 Weeks", "3 Weeks", "4 Weeks"];
 
@@ -32,7 +33,7 @@ const EMPTY_FORM = {
   deliveryAddress: "",
   deliveryLandmark: "",
   referredBy: "",
-  preferredCenterId: "",
+  referrerMobile: "",
   duration: "",
   notes: "",
 };
@@ -62,6 +63,45 @@ function SkuThumbnail({ name, imageUrl }: { name: string; imageUrl: string | nul
   );
 }
 
+/** Where a selected device will be collected: fixed when only one center has it, otherwise a choice. */
+function PickupChoice({
+  options,
+  value,
+  onChange,
+  centerName,
+}: {
+  options: string[];
+  value: string | undefined;
+  onChange: (centerId: string) => void;
+  centerName: (centerId: string) => string;
+}) {
+  if (options.length === 0) {
+    return <p className="text-xs text-destructive">No longer available at any center</p>;
+  }
+  if (options.length === 1) {
+    return (
+      <p className="flex items-center gap-1 text-sm text-foreground">
+        <MapPin className="h-4 w-4 shrink-0 text-primary" /> Pickup: {centerName(options[0]!)}
+      </p>
+    );
+  }
+  return (
+    <div className="flex items-center gap-2">
+      <MapPin className="h-4 w-4 shrink-0 text-primary" />
+      <Select value={value} onValueChange={onChange}>
+        <SelectTrigger className="h-9 min-w-40" aria-label="Pickup center for this device">
+          <SelectValue placeholder="Choose pickup center" />
+        </SelectTrigger>
+        <SelectContent>
+          {options.map((centerId) => (
+            <SelectItem key={centerId} value={centerId}>Pickup: {centerName(centerId)}</SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </div>
+  );
+}
+
 export default function LeaseRequestForm() {
   const navigate = useNavigate();
   const [quantities, setQuantities] = useState<Record<string, number>>({});
@@ -71,7 +111,8 @@ export default function LeaseRequestForm() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [skus, setSkus] = useState<Array<{ id: string; name: string; category: string | null; image_url: string | null }>>([]);
   const [centers, setCenters] = useState<Array<{ id: string; name: string }>>([]);
-  const [assets, setAssets] = useState<Array<{ sku_id: string; center_id: string | null; status: string }>>([]);
+  /** The pickup center chosen for each selected device, set as it is added (lib/pickupCenters). */
+  const [pickupCenters, setPickupCenters] = useState<Record<string, string>>({});
   const [formData, setFormData] = useState(EMPTY_FORM);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [filterArea, setFilterArea] = useState("all");
@@ -90,37 +131,23 @@ export default function LeaseRequestForm() {
 
   const selectedCount = Object.values(quantities).filter((q) => q > 0).length;
 
-  const isSplitCollectionNeeded = useMemo(() => {
-    if (!formData.preferredCenterId) return false;
-    const selectedSkuIds = Object.entries(quantities)
-      .filter(([, qty]) => qty > 0)
-      .map(([skuId]) => skuId);
+  const [stockItems, setStockItems] = useState<StockRow[]>([]);
 
-    return selectedSkuIds.some((skuId) => {
-      const hasLocalAsset = assets.some(
-        (asset) =>
-          asset.sku_id === skuId &&
-          asset.center_id === formData.preferredCenterId &&
-          asset.status === "available"
-      );
-      return !hasLocalAsset;
-    });
-  }, [formData.preferredCenterId, quantities, assets]);
-
-  const [stockItems, setStockItems] = useState<Array<{ sku_id: string; center_id: string; available_count: number }>>([]);
+  const selectedSkuIds = Object.entries(quantities)
+    .filter(([, qty]) => qty > 0)
+    .map(([skuId]) => skuId);
+  const pickupCenterCount = new Set(selectedSkuIds.map((skuId) => pickupCenters[skuId]).filter(Boolean)).size;
 
   useEffect(() => {
     async function loadData() {
       try {
-        const [centersResp, skusResp, assetsResp, stockResp] = await Promise.all([
+        const [centersResp, skusResp, stockResp] = await Promise.all([
           apiFetch<Array<{ id: string; name: string }>>("/api/v1/centers"),
           apiFetch<Array<{ id: string; name: string; category: string | null; image_url: string | null }>>("/api/v1/skus"),
-          apiFetch<Array<{ sku_id: string; center_id: string | null; status: string }>>("/api/v1/assets"),
-          apiFetch<Array<{ sku_id: string; center_id: string; available_count: number }>>("/api/v1/stock"),
+          apiFetch<StockRow[]>("/api/v1/stock"),
         ]);
         setCenters(centersResp);
         setSkus(skusResp);
-        setAssets(assetsResp);
         setStockItems(stockResp);
       } catch {
         // keep page functional; submit will still fail clearly if API is unavailable
@@ -157,18 +184,30 @@ export default function LeaseRequestForm() {
     [centers],
   );
 
+  const centerName = (centerId: string) => centerIdToName[centerId] ?? "Center";
+
   const updateQty = (id: string, delta: number) => {
-    setQuantities((p) => {
-      const cur = p[id] || 0;
-      const next = Math.max(0, Math.min(1, cur + delta));
-      setErrors((prev) => {
-        if (!prev.items) return prev;
-        const { items, ...rest } = prev;
-        return rest;
-      });
-      return { ...p, [id]: next };
+    const next = Math.max(0, Math.min(1, (quantities[id] || 0) + delta));
+    setQuantities((p) => ({ ...p, [id]: next }));
+    // A device gets its pickup center as it is added: see defaultPickupCenter for the order of preference.
+    setPickupCenters((p) => {
+      const others = { ...p };
+      delete others[id];
+      if (next === 0) return others;
+      if (p[id]) return p;
+      const areaCenterId = filterArea === "all" ? null : centerNameToId[filterArea] ?? null;
+      const chosen = defaultPickupCenter(id, stockItems, Object.values(others), areaCenterId);
+      return chosen ? { ...others, [id]: chosen } : others;
+    });
+    setErrors((prev) => {
+      if (!prev.items && !prev.pickup) return prev;
+      const { items: _items, pickup: _pickup, ...rest } = prev;
+      return rest;
     });
   };
+
+  const choosePickupCenter = (skuId: string, centerId: string) =>
+    setPickupCenters((p) => ({ ...p, [skuId]: centerId }));
 
   // The Aadhaar fields drop their error as soon as they are filled in, so a photo never sits next to "Add a photo".
   const clearErrors = (...keys: string[]) =>
@@ -193,7 +232,8 @@ export default function LeaseRequestForm() {
     if (!formData.aadharConsent) e.aadharConsent = "Please agree to continue";
     if (!formData.deliveryAddress.trim()) e.deliveryAddress = "Delivery address is required";
     if (!formData.referredBy.trim()) e.referredBy = "Referral source is required";
-    if (!formData.preferredCenterId) e.preferredCenterId = "Preferred pickup center is required";
+    if (!/^\d{10}$/.test(formData.referrerMobile)) e.referrerMobile = "Enter the referrer's 10-digit mobile";
+    if (selectedSkuIds.some((skuId) => !pickupCenters[skuId])) e.pickup = "Choose a pickup center for each device";
     if (!formData.duration) e.duration = "Select duration";
     setErrors(e);
     return Object.keys(e).length === 0;
@@ -203,7 +243,7 @@ export default function LeaseRequestForm() {
     if (!validate()) return;
     const selectedItems = Object.entries(quantities)
       .filter(([, qty]) => qty > 0)
-      .map(([skuId, qty]) => ({ sku_id: skuId, quantity_requested: qty }));
+      .map(([skuId, qty]) => ({ sku_id: skuId, quantity_requested: qty, pickup_center_id: pickupCenters[skuId] }));
     if (selectedItems.length === 0) {
       setErrors((prev) => ({ ...prev, items: "Select at least one device" }));
       return;
@@ -227,7 +267,8 @@ export default function LeaseRequestForm() {
           delivery_address: formData.deliveryAddress.trim(),
           delivery_landmark: formData.deliveryLandmark.trim() || null,
           reference_name: formData.referredBy.trim(),
-          preferred_center_id: formData.preferredCenterId,
+          reference_mobile: formData.referrerMobile,
+          preferred_center_id: selectedItems[0]?.pickup_center_id,
           expected_duration: formData.duration,
           notes: formData.notes.trim() || null,
           items: selectedItems,
@@ -265,7 +306,7 @@ export default function LeaseRequestForm() {
               </div>
               <div className="flex flex-col gap-2">
                 <Button onClick={() => navigate(`/status?token=${submittedToken}`)}>Track My Request</Button>
-                <Button variant="outline" onClick={() => { setSubmitted(false); setQuantities({}); setShowForm(false); setFormData(EMPTY_FORM); }}>Submit Another Request</Button>
+                <Button variant="outline" onClick={() => { setSubmitted(false); setQuantities({}); setPickupCenters({}); setShowForm(false); setFormData(EMPTY_FORM); }}>Submit Another Request</Button>
               </div>
             </CardContent>
           </Card>
@@ -407,6 +448,14 @@ export default function LeaseRequestForm() {
                             </Button>
                           </div>
                         </div>
+                        {qty > 0 && (
+                          <PickupChoice
+                            options={centersWithStock(sku.id, stockItems)}
+                            value={pickupCenters[sku.id]}
+                            onChange={(centerId) => choosePickupCenter(sku.id, centerId)}
+                            centerName={centerName}
+                          />
+                        )}
                       </div>
                     );
                   })}
@@ -424,6 +473,7 @@ export default function LeaseRequestForm() {
                       <TableHead>Device</TableHead>
                       <TableHead>Available At</TableHead>
                       <TableHead>Status</TableHead>
+                      <TableHead>Pickup at</TableHead>
                       <TableHead className="text-right">Qty</TableHead>
                     </TableRow>
                   </TableHeader>
@@ -473,6 +523,18 @@ export default function LeaseRequestForm() {
                             </Badge>
                           </TableCell>
                           <TableCell>
+                            {qty > 0 ? (
+                              <PickupChoice
+                                options={centersWithStock(sku.id, stockItems)}
+                                value={pickupCenters[sku.id]}
+                                onChange={(centerId) => choosePickupCenter(sku.id, centerId)}
+                                centerName={centerName}
+                              />
+                            ) : (
+                              <span className="text-sm text-muted-foreground">-</span>
+                            )}
+                          </TableCell>
+                          <TableCell>
                             <div className="flex items-center justify-end gap-2">
                               <Button size="icon" variant="outline" className="h-7 w-7" onClick={() => updateQty(sku.id, -1)} disabled={qty === 0}>
                                 <Minus className="h-3 w-3" />
@@ -488,7 +550,7 @@ export default function LeaseRequestForm() {
                     })}
                     {filteredSKUs.length === 0 && (
                       <TableRow>
-                        <TableCell colSpan={4} className="text-center text-muted-foreground py-8">
+                        <TableCell colSpan={5} className="text-center text-muted-foreground py-8">
                           No devices found for the selected filters.
                         </TableCell>
                       </TableRow>
@@ -502,7 +564,10 @@ export default function LeaseRequestForm() {
             {selectedCount > 0 && (
               <>
                 <div className="sticky bottom-0 z-10 -mx-4 rounded-t-lg border-t border-border bg-card p-4 shadow-lg backdrop-blur sm:flex sm:items-center sm:justify-between">
-                  <span className="text-sm font-medium text-foreground">{selectedCount} item{selectedCount > 1 ? "s" : ""} selected</span>
+                  <span className="text-sm font-medium text-foreground">
+                    {selectedCount} item{selectedCount > 1 ? "s" : ""} selected
+                    {pickupCenterCount > 1 && <span className="font-normal text-muted-foreground"> · from {pickupCenterCount} centers</span>}
+                  </span>
                   <Button onClick={() => setShowForm(true)} className="mt-3 min-h-12 w-full sm:mt-0 sm:w-auto">Continue to Details</Button>
                 </div>
                 {errors.items && <p className="text-xs text-destructive">{errors.items}</p>}
@@ -571,6 +636,26 @@ export default function LeaseRequestForm() {
                       placeholder="Doctor / social worker name"
                     />
                     {errors.referredBy && <p className="text-xs text-destructive">{errors.referredBy}</p>}
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <Label htmlFor="requestor-referrer-mobile">Referrer's Mobile Number<RequiredMark /></Label>
+                    <div className="flex items-stretch gap-2">
+                      <span className="inline-flex min-h-11 items-center rounded-md border border-input bg-muted px-3 text-sm text-muted-foreground">+91</span>
+                      <Input
+                        id="requestor-referrer-mobile"
+                        className="min-h-11"
+                        inputMode="numeric"
+                        value={formData.referrerMobile}
+                        onChange={(e) => {
+                          const value = e.target.value.replace(/\D/g, "").slice(0, 10);
+                          setFormData((p) => ({ ...p, referrerMobile: value }));
+                          if (value.length === 10) clearErrors("referrerMobile");
+                        }}
+                        placeholder="10-digit number"
+                      />
+                    </div>
+                    {errors.referrerMobile && <p className="text-xs text-destructive">{errors.referrerMobile}</p>}
                   </div>
 
                   <div className="space-y-1.5 md:col-span-2">
@@ -692,23 +777,28 @@ export default function LeaseRequestForm() {
               <div>
                 <div className="space-y-1 border-b border-border pb-4">
                   <h3 className="text-base md:text-lg font-semibold text-foreground">Pickup Details</h3>
-                  <p className="text-sm text-muted-foreground">Select your preferred pickup center and duration.</p>
+                  <p className="text-sm text-muted-foreground">Where you will collect each device, and for how long you need it.</p>
                 </div>
 
                 <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
                   <div className="space-y-1.5">
-                    <Label htmlFor="preferred-center">Preferred Pickup Center<RequiredMark /></Label>
-                    <Select value={formData.preferredCenterId} onValueChange={(v) => setFormData((p) => ({ ...p, preferredCenterId: v }))}>
-                      <SelectTrigger id="preferred-center" className="min-h-11">
-                        <SelectValue placeholder="Select pickup center" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {centers.map((c) => (
-                          <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
+                    <p className="text-sm font-medium text-foreground">Pickup centers</p>
+                    <ul className="space-y-1 text-sm">
+                      {skus
+                        .filter((sku) => (quantities[sku.id] || 0) > 0)
+                        .map((sku) => (
+                          <li key={sku.id} className="flex items-start gap-1">
+                            <MapPin className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+                            <span>
+                              {sku.name}: <span className="font-medium">{pickupCenters[sku.id] ? centerName(pickupCenters[sku.id]!) : "not chosen"}</span>
+                            </span>
+                          </li>
                         ))}
-                      </SelectContent>
-                    </Select>
-                    {errors.preferredCenterId && <p className="text-xs text-destructive">{errors.preferredCenterId}</p>}
+                    </ul>
+                    <Button type="button" variant="link" className="h-auto p-0 text-sm" onClick={() => setShowForm(false)}>
+                      Change devices or pickup centers
+                    </Button>
+                    {errors.pickup && <p className="text-xs text-destructive">{errors.pickup}</p>}
                   </div>
 
                   <div className="space-y-1.5">
@@ -724,9 +814,9 @@ export default function LeaseRequestForm() {
                 </div>
               </div>
 
-              {isSplitCollectionNeeded && (
+              {pickupCenterCount > 1 && (
                 <div className="rounded-md border border-warning/30 bg-warning/5 px-3 py-3 text-sm text-warning font-medium">
-                  Note: Since not all selected items are available at your preferred pickup center, if your request gets approved, you will have to collect the devices from their respective centers.
+                  Note: Your devices are at {pickupCenterCount} different centers. If your request is approved, you will collect each device from the center shown above.
                 </div>
               )}
 

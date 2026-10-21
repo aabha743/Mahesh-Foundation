@@ -36,7 +36,13 @@ type LeaseLookup = {
   status: string;
   skus: string[];
   notes?: string | null;
-  items?: Array<{ sku_id: string; sku_name: string; quantity_requested: number; asset_id?: string | null }>;
+  items?: Array<{
+    sku_id: string;
+    sku_name: string;
+    quantity_requested: number;
+    asset_id?: string | null;
+    pickup_center_name?: string | null;
+  }>;
 };
 type LeaseIssueContext = LeaseLookup & {
   issue_items?: Array<{
@@ -107,8 +113,8 @@ export default function IssueDevice() {
     ? ((lease.items ?? []).length > 0
         ? (lease.items ?? [])
             .filter((item) => !item.asset_id)
-            .map((item, idx) => ({ key: `${item.sku_name}-${idx}`, sku: item.sku_name }))
-        : lease.skus.map((name, idx) => ({ key: `${name}-${idx}`, sku: name }))
+            .map((item, idx) => ({ key: `${item.sku_name}-${idx}`, sku: item.sku_name, pickupCenter: item.pickup_center_name }))
+        : lease.skus.map((name, idx) => ({ key: `${name}-${idx}`, sku: name, pickupCenter: null as string | null | undefined }))
       )
     : [];
 
@@ -511,6 +517,9 @@ export default function IssueDevice() {
               return (
               <div key={item.key} className="border rounded-lg p-4 space-y-2">
                 <p className="font-medium text-sm">{item.sku}</p>
+                {item.pickupCenter && (
+                  <p className="text-xs text-muted-foreground">Requested pickup: {item.pickupCenter}</p>
+                )}
                 {itemUnavailable[item.key] ? (
                   <div className="rounded-md border border-warning/30 bg-warning/5 p-3 text-xs space-y-2">
                     <div className="flex items-center gap-2 text-warning font-medium">

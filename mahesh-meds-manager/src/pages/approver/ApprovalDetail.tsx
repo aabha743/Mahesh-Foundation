@@ -50,6 +50,7 @@ export default function ApprovalDetail() {
             aadhar_photos_status?: "present" | "deleted" | "none";
             patient_photo_is_requesters?: boolean;
             reference_name: string | null;
+            reference_mobile?: string | null;
             expected_duration: string | null;
             notes: string | null;
             status: string;
@@ -58,7 +59,7 @@ export default function ApprovalDetail() {
             rejection_reason: string | null;
             fulfillment_centers?: Array<{ center_id: string; center_name: string }>;
             skus: string[];
-            items?: Array<{ sku_id: string; sku_name: string; quantity_requested: number }>;
+            items?: Array<{ sku_id: string; sku_name: string; quantity_requested: number; pickup_center_name?: string | null }>;
           }>>("/api/v1/lease-requests"),
           apiFetch<Array<{ id: string; name: string }>>("/api/v1/skus"),
           apiFetch<Array<{ id: string; name: string }>>("/api/v1/centers?include_inactive=true"),
@@ -79,7 +80,11 @@ export default function ApprovalDetail() {
         setSkuNameToIdMap(skuNameToId);
         const status = formatLeaseStatus(row.status) as ApprovalRequest["status"];
         const items = (row.items ?? []).length
-          ? (row.items ?? []).map((item) => ({ sku: item.sku_name, qty: item.quantity_requested }))
+          ? (row.items ?? []).map((item) => ({
+              sku: item.sku_name,
+              qty: item.quantity_requested,
+              pickupCenter: item.pickup_center_name ?? undefined,
+            }))
           : (row.skus ?? []).map((sku) => ({ sku, qty: 1 }));
         const availability = Object.fromEntries(
           items.map((item) => {
@@ -107,6 +112,7 @@ export default function ApprovalDetail() {
             centers.find((center) => center.id === row.preferred_center_id)?.name,
           ),
           referredBy: row.reference_name || "Not provided",
+          referrerMobile: row.reference_mobile ?? undefined,
           submittedDate: row.created_at.slice(0, 10),
           daysWaiting: 0,
           status,
@@ -258,7 +264,18 @@ export default function ApprovalDetail() {
                 <p className="font-medium text-foreground">{request.patientIsRequester ? "Same as requester" : "Not provided"}</p>
               )}
             </div>
-            <div><span className="text-muted-foreground">Referred By</span><p className="font-medium text-foreground">{request.referredBy}</p></div>
+            <div>
+              <span className="text-muted-foreground">Referred By</span>
+              <p className="font-medium text-foreground">{request.referredBy}</p>
+              {request.referrerMobile && (
+                <p className="font-mono text-foreground">
+                  {request.referrerMobile}
+                  {request.referrerMobile === request.mobile && (
+                    <span className="ml-1 font-sans text-xs text-warning">(same as requester)</span>
+                  )}
+                </p>
+              )}
+            </div>
           </div>
 
           <div className="space-y-2 border-t pt-3">
@@ -283,7 +300,7 @@ export default function ApprovalDetail() {
           <div className="overflow-x-auto">
           <Table className="min-w-[420px]">
             <TableHeader>
-              <TableRow><TableHead>SKU Name</TableHead><TableHead>Qty</TableHead><TableHead>Availability</TableHead></TableRow>
+              <TableRow><TableHead>SKU Name</TableHead><TableHead>Qty</TableHead><TableHead>Pickup at</TableHead><TableHead>Availability</TableHead></TableRow>
             </TableHeader>
             <TableBody>
               {request.items.map((item, index) => {
@@ -293,6 +310,7 @@ export default function ApprovalDetail() {
                   <TableRow key={`${item.sku}-${index}`}>
                     <TableCell>{item.sku}</TableCell>
                     <TableCell>{item.qty}</TableCell>
+                    <TableCell>{item.pickupCenter ?? <span className="text-muted-foreground">Not chosen</span>}</TableCell>
                     <TableCell>
                       <span className={sufficient ? "text-success font-medium" : "text-destructive font-medium"}>
                         {avail} in stock

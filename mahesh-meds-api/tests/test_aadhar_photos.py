@@ -51,11 +51,12 @@ class AadharPhotoTests(support.LeaseApiTestCase):
             "preferred_center_id": self.center.id,
             "expected_duration": "1 Week",
             "items": [{"sku_id": self.sku.id, "quantity_requested": 1}],
-            **support.AADHAR_FIELDS,
+            **support.FORM_FIELDS,
             **overrides,
         }
 
     def submit(self, client=None, **overrides):
+        self.make_asset()  # a submission holds one free device at its pickup center
         response = (client or self.client).post("/api/v1/lease-requests", json=self.body(**overrides))
         if response.status_code == 200:
             self.lease_ids.append(response.json()["id"])

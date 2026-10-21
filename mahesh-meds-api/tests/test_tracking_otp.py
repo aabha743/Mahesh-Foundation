@@ -57,12 +57,13 @@ class TrackingOtpTests(support.LeaseApiTestCase):
     # --- tokens ----------------------------------------------------------------
 
     def submit(self, **overrides):
+        self.make_asset()  # a submission holds one free device at its pickup center
         body = {
             "token_number": "MDF-CLIENT1",
             "requestor_name": "Token Test", "mobile": support.random_mobile(), "aadhar_number": "999988887777",
             "patient_name": "P", "delivery_address": "A", "reference_name": "R",
             "preferred_center_id": self.center.id, "expected_duration": "1 Week",
-            "items": [{"sku_id": self.sku.id, "quantity_requested": 1}], **support.AADHAR_FIELDS, **overrides,
+            "items": [{"sku_id": self.sku.id, "quantity_requested": 1}], **support.FORM_FIELDS, **overrides,
         }
         response = self.client.post("/api/v1/lease-requests", json=body)
         self.assertEqual(response.status_code, 200, response.text)

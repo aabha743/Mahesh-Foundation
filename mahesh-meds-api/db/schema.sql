@@ -186,6 +186,8 @@ CREATE TABLE lease_requests (
   delivery_address TEXT,
   delivery_landmark VARCHAR(255),
   reference_name VARCHAR(150),
+  -- The referrer's mobile (migration 006).
+  reference_mobile VARCHAR(15) NULL,
   preferred_center_id CHAR(36),
   expected_duration VARCHAR(50),
   due_date DATE,
@@ -206,6 +208,7 @@ CREATE TABLE lease_requests (
   CONSTRAINT chk_lease_mobile_10_digits CHECK (mobile REGEXP '^[0-9]{10}$'),
   CONSTRAINT chk_lease_aadhar_12_digits CHECK (aadhar_number REGEXP '^[0-9]{12}$'),
   CONSTRAINT chk_lease_patient_aadhar_12_digits CHECK (patient_aadhar_number IS NULL OR patient_aadhar_number REGEXP '^[0-9]{12}$'),
+  CONSTRAINT chk_lease_reference_mobile_10_digits CHECK (reference_mobile IS NULL OR reference_mobile REGEXP '^[0-9]{10}$'),
   FOREIGN KEY (preferred_center_id) REFERENCES centers(id) ON DELETE SET NULL,
   INDEX idx_lease_token (token_number),
   INDEX idx_lease_mobile (mobile),
@@ -226,6 +229,8 @@ CREATE TABLE lease_items (
   lease_request_id CHAR(36) NOT NULL,
   sku_id CHAR(36) NOT NULL,
   asset_id CHAR(36),
+  -- The center the requester chose to collect this device from (migration 006).
+  pickup_center_id CHAR(36) NULL,
   quantity_requested INT NOT NULL DEFAULT 1,
   approved_quantity INT DEFAULT NULL,
   issued_at DATETIME NULL,
@@ -244,6 +249,7 @@ CREATE TABLE lease_items (
   FOREIGN KEY (issued_by) REFERENCES users(id) ON DELETE SET NULL,
   FOREIGN KEY (returned_to) REFERENCES users(id) ON DELETE SET NULL,
   FOREIGN KEY (return_center_id) REFERENCES centers(id) ON DELETE SET NULL,
+  CONSTRAINT fk_items_pickup_center FOREIGN KEY (pickup_center_id) REFERENCES centers(id) ON DELETE SET NULL,
   INDEX idx_items_request (lease_request_id),
   INDEX idx_items_asset (asset_id),
   INDEX idx_items_sku (sku_id),
