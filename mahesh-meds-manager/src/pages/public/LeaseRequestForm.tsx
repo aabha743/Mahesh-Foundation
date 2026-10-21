@@ -627,6 +627,20 @@ export default function LeaseRequestForm() {
                   </div>
 
                   <div className="space-y-1.5">
+                    <Label htmlFor="requestor-aadhar-photo">Photo of Aadhaar Card<RequiredMark /></Label>
+                    <AadharPhotoInput
+                      id="requestor-aadhar-photo"
+                      subject="requester's Aadhaar card"
+                      value={formData.aadharPhoto}
+                      onChange={(photo) => {
+                        setFormData((p) => ({ ...p, aadharPhoto: photo }));
+                        if (photo) clearErrors("aadharPhoto");
+                      }}
+                      error={errors.aadharPhoto}
+                    />
+                  </div>
+
+                  <div className="space-y-1.5">
                     <Label htmlFor="requestor-referrer">Referred By<RequiredMark /></Label>
                     <Input
                       id="requestor-referrer"
@@ -657,20 +671,6 @@ export default function LeaseRequestForm() {
                     </div>
                     {errors.referrerMobile && <p className="text-xs text-destructive">{errors.referrerMobile}</p>}
                   </div>
-
-                  <div className="space-y-1.5 md:col-span-2">
-                    <Label htmlFor="requestor-aadhar-photo">Photo of Aadhaar Card<RequiredMark /></Label>
-                    <AadharPhotoInput
-                      id="requestor-aadhar-photo"
-                      subject="requester's Aadhaar card"
-                      value={formData.aadharPhoto}
-                      onChange={(photo) => {
-                        setFormData((p) => ({ ...p, aadharPhoto: photo }));
-                        if (photo) clearErrors("aadharPhoto");
-                      }}
-                      error={errors.aadharPhoto}
-                    />
-                  </div>
                 </div>
               </div>
 
@@ -699,7 +699,7 @@ export default function LeaseRequestForm() {
                     </p>
                   ) : (
                     <>
-                      <div className="space-y-1.5">
+                      <div className="space-y-1.5 md:col-span-2">
                         <Label htmlFor="patient-name">Patient's Name<RequiredMark /></Label>
                         <Input
                           id="patient-name"
@@ -733,7 +733,7 @@ export default function LeaseRequestForm() {
                         {errors.patientAadhar && <p className="text-xs text-destructive">{errors.patientAadhar}</p>}
                       </div>
 
-                      <div className="space-y-1.5 md:col-span-2">
+                      <div className="space-y-1.5">
                         <Label htmlFor="patient-aadhar-photo">Photo of Patient's Aadhaar Card<RequiredMark /></Label>
                         <AadharPhotoInput
                           id="patient-aadhar-photo"
