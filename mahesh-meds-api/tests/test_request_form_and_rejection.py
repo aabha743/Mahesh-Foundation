@@ -15,6 +15,7 @@ class RequestFormAndRejectionTests(support.LeaseApiTestCase):
     """Client feedback, phase 1: optional landmark, 1-4 week durations, rejections without a reason."""
 
     def submit(self, **overrides):
+        self.make_asset()  # a submission holds one free device at its pickup center
         body = {
             "token_number": f"LT-{uuid.uuid4().hex[:10].upper()}",
             "requestor_name": "Form Test Requestor",
@@ -27,7 +28,7 @@ class RequestFormAndRejectionTests(support.LeaseApiTestCase):
             "preferred_center_id": self.center.id,
             "expected_duration": "1 Week",
             "items": [{"sku_id": self.sku.id, "quantity_requested": 1}],
-            **support.AADHAR_FIELDS,
+            **support.FORM_FIELDS,
             **overrides,
         }
         response = self.client.post("/api/v1/lease-requests", json=body)
@@ -63,9 +64,10 @@ class RequestFormAndRejectionTests(support.LeaseApiTestCase):
             "preferred_center_id": self.center.id,
             "expected_duration": "2 Weeks",
             "items": [{"sku_id": self.sku.id, "quantity_requested": 1}],
-            **support.AADHAR_FIELDS,
+            **support.FORM_FIELDS,
         }
 
+        self.make_asset()  # a submission holds one free device at its pickup center
         response = self.client.post("/api/v1/lease-requests", json=body)
 
         self.assertEqual(response.status_code, 200, response.text)

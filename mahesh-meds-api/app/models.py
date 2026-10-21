@@ -191,6 +191,10 @@ class LeaseRequest(Base):
             "patient_aadhar_number IS NULL OR patient_aadhar_number REGEXP '^[0-9]{12}$'",
             name="chk_lease_patient_aadhar_12_digits",
         ),
+        CheckConstraint(
+            "reference_mobile IS NULL OR reference_mobile REGEXP '^[0-9]{10}$'",
+            name="chk_lease_reference_mobile_10_digits",
+        ),
     )
 
     id: Mapped[str] = mapped_column(CHAR(36), primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -208,6 +212,7 @@ class LeaseRequest(Base):
     delivery_address: Mapped[str | None] = mapped_column(Text, nullable=True)
     delivery_landmark: Mapped[str | None] = mapped_column(String(255), nullable=True)
     reference_name: Mapped[str | None] = mapped_column(String(150))
+    reference_mobile: Mapped[str | None] = mapped_column(String(15))
     preferred_center_id: Mapped[str | None] = mapped_column(CHAR(36), ForeignKey("centers.id"))
     expected_duration: Mapped[str | None] = mapped_column(String(50))
     due_date: Mapped[Date | None] = mapped_column(Date)
@@ -247,6 +252,8 @@ class LeaseItem(Base):
     lease_request_id: Mapped[str] = mapped_column(CHAR(36), ForeignKey("lease_requests.id"), nullable=False)
     sku_id: Mapped[str] = mapped_column(CHAR(36), ForeignKey("skus.id"), nullable=False)
     asset_id: Mapped[str | None] = mapped_column(CHAR(36), ForeignKey("assets.id"))
+    # Where the requester chose to collect this device; None on requests made before this was asked.
+    pickup_center_id: Mapped[str | None] = mapped_column(CHAR(36), ForeignKey("centers.id"))
     quantity_requested: Mapped[int] = mapped_column(default=1, nullable=False)
     approved_quantity: Mapped[int | None] = mapped_column()
     issued_at: Mapped[datetime | None] = mapped_column(DateTime)

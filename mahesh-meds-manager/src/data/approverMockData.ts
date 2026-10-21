@@ -11,9 +11,11 @@ export interface ApprovalRequest {
   /** Whether the request has Aadhaar card photos; see AadharPhotos. */
   aadharPhotosStatus?: "present" | "deleted" | "none";
   patientIsRequester?: boolean;
-  items: { sku: string; qty: number }[];
+  /** pickupCenter: where the requester chose to collect it (requests from before that was asked have none). */
+  items: { sku: string; qty: number; pickupCenter?: string }[];
   preferredCenter: string;
   referredBy: string;
+  referrerMobile?: string;
   submittedDate: string;
   daysWaiting: number;
   status: "Pending" | "Approved" | "Rejected" | "Active" | "Closed" | "Expired";

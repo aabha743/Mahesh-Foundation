@@ -168,6 +168,7 @@ class LeaseRequestBase(BaseModel):
     delivery_address: str | None = None
     delivery_landmark: str | None = None
     reference_name: str | None = None
+    reference_mobile: MobileNumber | None = None
     preferred_center_id: str | None = None
     expected_duration: str | None = None
     notes: str | None = None
@@ -180,6 +181,8 @@ class LeaseRequestItemCreate(BaseModel):
     sku_id: str
     quantity_requested: int = 1
     asset_id: str | None = None
+    # Where the requester will collect this device. Updates that leave it out keep the line's current center.
+    pickup_center_id: str | None = None
 
 
 class LeaseRequestCreate(LeaseRequestBase):
@@ -189,7 +192,8 @@ class LeaseRequestCreate(LeaseRequestBase):
     delivery_address: str
     delivery_landmark: str | None = None
     reference_name: str
-    preferred_center_id: str
+    # Each item carries its pickup center; the request's own center becomes the first item's.
+    preferred_center_id: str | None = None
     items: list[LeaseRequestItemCreate] = Field(default_factory=list)
     # Aadhaar card photos, base64 (a data: URL is fine). Without patient_is_requester the patient's is required too.
     # The length cap sits above the 1.5 MB photo limit, so an oversized photo gets a clear message (app.photo_storage).
@@ -216,6 +220,8 @@ class LeaseRequestItemOut(BaseModel):
     sku_name: str
     quantity_requested: int
     asset_id: str | None = None
+    pickup_center_id: str | None = None
+    pickup_center_name: str | None = None
     due_date: date | None = None
     returned_at: datetime | None = None
 

@@ -129,25 +129,36 @@ EXPIRED_REQUEST_DETAIL = (
 )
 
 
-def reserve_stock(db: Session, lease: LeaseRequest, sku_ids: list[str], release_at: datetime | None) -> int:
-    """Hold one available unit per requested SKU at the pickup center; returns the number of holds added."""
+def available_at(db: Session, sku_id: str, center_id: str | None) -> int:
+    """Units of a model free to promise at a center: available devices minus other requests' holds."""
+    if not center_id:
+        return 0
+    row = db.execute(
+        text("SELECT available_count FROM sku_stock_by_center WHERE sku_id = :sku_id AND center_id = :center_id"),
+        {"sku_id": sku_id, "center_id": center_id},
+    ).first()
+    return int(row[0]) if row and row[0] else 0
+
+
+def reserve_stock(
+    db: Session, lease: LeaseRequest, lines: list[tuple[str, str | None]], release_at: datetime | None
+) -> int:
+    """Hold one available unit per (model, pickup center) line; a line without a center uses the request's center.
+    Returns the number of holds added."""
     created = 0
-    for sku_id in sku_ids:
-        stock_row = db.execute(
-            text("SELECT available_count FROM sku_stock_by_center WHERE sku_id = :sku_id AND center_id = :center_id"),
-            {"sku_id": sku_id, "center_id": lease.preferred_center_id}
-        ).first()
-        avail_count = stock_row[0] if stock_row else 0
-        if avail_count > 0:
+    for sku_id, center_id in lines:
+        center_id = center_id or lease.preferred_center_id
+        if available_at(db, sku_id, center_id) > 0:
             db.add(
                 SKUBlock(
                     lease_request_id=lease.id,
                     sku_id=sku_id,
-                    center_id=lease.preferred_center_id,
+                    center_id=center_id,
                     status="blocked",
                     release_at=release_at
                 )
             )
+            db.flush()  # so the next line sees this hold in sku_stock_by_center
             created += 1
     return created
 
@@ -419,6 +430,7 @@ def build_fulfillment_plan(db: Session, lease_request_id: str) -> tuple[list[dic
             SKU.name,
             LeaseItem.quantity_requested,
             LeaseItem.asset_id,
+            LeaseItem.pickup_center_id,
         )
         .join(SKU, SKU.id == LeaseItem.sku_id)
         .where(LeaseItem.lease_request_id == lease_request_id)
@@ -426,7 +438,7 @@ def build_fulfillment_plan(db: Session, lease_request_id: str) -> tuple[list[dic
     if not item_rows:
         return [], None
 
-    assigned_asset_ids = [asset_id for _, _, _, asset_id in item_rows if asset_id]
+    assigned_asset_ids = [asset_id for _, _, _, asset_id, _ in item_rows if asset_id]
     assigned_assets: dict[str, Asset] = {}
     if assigned_asset_ids:
         assigned_assets = {
@@ -434,7 +446,7 @@ def build_fulfillment_plan(db: Session, lease_request_id: str) -> tuple[list[dic
             for asset in db.query(Asset).filter(Asset.id.in_(assigned_asset_ids)).all()
         }
 
-    pending_sku_ids = list({sku_id for sku_id, _, _, asset_id in item_rows if not asset_id})
+    pending_sku_ids = list({sku_id for sku_id, _, _, asset_id, _ in item_rows if not asset_id})
     availability_by_sku: dict[str, dict[str, int]] = {}
     if pending_sku_ids:
         availability_rows = db.execute(
@@ -471,7 +483,7 @@ def build_fulfillment_plan(db: Session, lease_request_id: str) -> tuple[list[dic
             bucket["item_names"].append(sku_name)
 
     shortage_item_names: list[str] = []
-    for sku_id, sku_name, quantity_requested, asset_id in item_rows:
+    for sku_id, sku_name, quantity_requested, asset_id, pickup_center_id in item_rows:
         if asset_id:
             asset = assigned_assets.get(asset_id)
             lease_center_id = asset.home_center_id if asset and asset.home_center_id else asset.center_id if asset else None
@@ -480,6 +492,12 @@ def build_fulfillment_plan(db: Session, lease_request_id: str) -> tuple[list[dic
 
         remaining = quantity_requested
         center_counts = availability_by_sku.setdefault(sku_id, {})
+        # The center the requester chose comes first while it still has the device.
+        if pickup_center_id and center_counts.get(pickup_center_id, 0) > 0:
+            take = min(remaining, center_counts[pickup_center_id])
+            add_center_assignment(pickup_center_id, sku_name, take)
+            center_counts[pickup_center_id] -= take
+            remaining -= take
         sorted_sources = sorted(
             center_counts.items(),
             key=lambda pair: (-pair[1], center_name_by_id.get(pair[0], "Center")),
@@ -531,6 +549,10 @@ def build_fulfillment_plan(db: Session, lease_request_id: str) -> tuple[list[dic
     return fulfillment_centers, fulfillment_message
 
 
+def center_names_by_id(db: Session) -> dict[str, str]:
+    return {center_id: name for center_id, name in db.query(Center.id, Center.name).all()}
+
+
 def fulfillment_plan_for(db: Session, req: LeaseRequest) -> tuple[list[dict], str | None]:
     """Pickup guidance for display: only pending and approved requests still have devices to collect."""
     if req.status not in {"pending", "approved"}:
@@ -564,21 +586,25 @@ def build_public_lease_lookup_result(db: Session, req: LeaseRequest, *, include_
             LeaseItem.asset_id,
             LeaseItem.due_date,
             LeaseItem.returned_at,
+            LeaseItem.pickup_center_id,
         )
         .join(SKU, SKU.id == LeaseItem.sku_id)
         .where(LeaseItem.lease_request_id == req.id)
     ).all()
-    skus = [name for _, _, name, _, _, _, _ in sku_rows]
+    center_names = center_names_by_id(db)
+    skus = [row.name for row in sku_rows]
     items = [
         {
-            "sku_id": sku_id,
-            "sku_name": name,
-            "quantity_requested": quantity_requested,
-            "asset_id": asset_id,
-            "due_date": due_date,
-            "returned_at": returned_at,
+            "sku_id": row.sku_id,
+            "sku_name": row.name,
+            "quantity_requested": row.quantity_requested,
+            "asset_id": row.asset_id,
+            "due_date": row.due_date,
+            "returned_at": row.returned_at,
+            "pickup_center_id": row.pickup_center_id,
+            "pickup_center_name": center_names.get(row.pickup_center_id),
         }
-        for _, sku_id, name, quantity_requested, asset_id, due_date, returned_at in sku_rows
+        for row in sku_rows
     ]
     extension_eligible, extension_reason, pending_extension_request = evaluate_extension_eligibility(db, req)
     fulfillment_centers, fulfillment_message = fulfillment_plan_for(db, req)

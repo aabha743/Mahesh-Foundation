@@ -61,6 +61,8 @@ from app.leasing import (
     lease_status_to_db,
     next_token_number,
     normalize_public_tracking_mobile,
+    available_at,
+    center_names_by_id,
     reserve_stock,
     resolve_lease_db_status,
     settle_lease_after_return,
@@ -183,20 +185,24 @@ def get_issue_context(
             LeaseItem.quantity_requested,
             LeaseItem.asset_id,
             LeaseItem.due_date,
+            LeaseItem.pickup_center_id,
         )
         .join(SKU, SKU.id == LeaseItem.sku_id)
         .where(LeaseItem.lease_request_id == req.id)
     ).all()
-    skus = [name for _, _, name, _, _, _ in sku_rows]
+    center_names = center_names_by_id(db)
+    skus = [row.name for row in sku_rows]
     items = [
         {
-            "sku_id": sku_id,
-            "sku_name": name,
-            "quantity_requested": quantity_requested,
-            "asset_id": asset_id,
-            "due_date": due_date,
+            "sku_id": row.sku_id,
+            "sku_name": row.name,
+            "quantity_requested": row.quantity_requested,
+            "asset_id": row.asset_id,
+            "due_date": row.due_date,
+            "pickup_center_id": row.pickup_center_id,
+            "pickup_center_name": center_names.get(row.pickup_center_id),
         }
-        for _, sku_id, name, quantity_requested, asset_id, due_date in sku_rows
+        for row in sku_rows
     ]
 
     pending_sku_ids = [item["sku_id"] for item in items if not item["asset_id"]]
@@ -278,23 +284,27 @@ def list_lease_requests(
             LeaseItem.asset_id,
             LeaseItem.due_date,
             LeaseItem.returned_at,
+            LeaseItem.pickup_center_id,
         )
         .join(SKU, SKU.id == LeaseItem.sku_id)
         .where(LeaseItem.lease_request_id.in_(request_ids))
     ).all()
 
+    center_names = center_names_by_id(db)
     sku_map: dict[str, list[str]] = {}
     item_map: dict[str, list[dict[str, str | int]]] = {}
-    for lease_request_id, sku_id, sku_name, quantity_requested, asset_id, due_date, returned_at in sku_rows:
-        sku_map.setdefault(lease_request_id, []).append(sku_name)
-        item_map.setdefault(lease_request_id, []).append(
+    for row in sku_rows:
+        sku_map.setdefault(row.lease_request_id, []).append(row.name)
+        item_map.setdefault(row.lease_request_id, []).append(
             {
-                "sku_id": sku_id,
-                "sku_name": sku_name,
-                "quantity_requested": quantity_requested,
-                "asset_id": asset_id,
-                "due_date": due_date,
-                "returned_at": returned_at,
+                "sku_id": row.sku_id,
+                "sku_name": row.name,
+                "quantity_requested": row.quantity_requested,
+                "asset_id": row.asset_id,
+                "due_date": row.due_date,
+                "returned_at": row.returned_at,
+                "pickup_center_id": row.pickup_center_id,
+                "pickup_center_name": center_names.get(row.pickup_center_id),
             }
         )
 
@@ -321,11 +331,11 @@ def create_lease_request(
     db: Session = Depends(get_db),
 ):
     """Creates lease request + lease items and derives fulfillment-aware status (PUBLIC - no auth required)."""
-    if not payload.preferred_center_id or not payload.preferred_center_id.strip():
-        raise HTTPException(status_code=400, detail="Please select a pickup center.")
-
     if not payload.reference_name or not payload.reference_name.strip():
         raise HTTPException(status_code=400, detail="Please provide a referral name.")
+
+    if not payload.reference_mobile:
+        raise HTTPException(status_code=400, detail="Please provide the referrer's mobile number.")
 
     if not payload.patient_name or not payload.patient_name.strip():
         raise HTTPException(status_code=400, detail="Patient name is required.")
@@ -342,9 +352,30 @@ def create_lease_request(
             detail=f"The maximum expected lease duration is 4 weeks. Allowed values: {', '.join(REQUEST_DURATIONS)}."
         )
 
+    if not payload.items:
+        raise HTTPException(status_code=400, detail="Please select at least one device.")
+    # Each device is collected from a center the requester chose where it is available. A line without a
+    # center (an older form) uses the request's preferred center.
+    wanted: dict[tuple[str, str], int] = {}
     for item in payload.items:
-        if not db.get(SKU, item.sku_id):
+        sku = db.get(SKU, item.sku_id)
+        if not sku:
             raise HTTPException(status_code=400, detail=f"Invalid sku_id in items: {item.sku_id}")
+        item.asset_id = None
+        item.pickup_center_id = (item.pickup_center_id or payload.preferred_center_id or "").strip() or None
+        if not item.pickup_center_id:
+            raise HTTPException(status_code=400, detail=f"Please choose where to collect the {sku.name}.")
+        center = db.get(Center, item.pickup_center_id)
+        if not center or not center.is_active:
+            raise HTTPException(status_code=400, detail=f"Invalid pickup center for the {sku.name}.")
+        key = (sku.id, center.id)
+        wanted[key] = wanted.get(key, 0) + max(1, item.quantity_requested)
+        if available_at(db, sku.id, center.id) < wanted[key]:
+            raise HTTPException(
+                status_code=409,
+                detail=f"The {sku.name} is no longer available at {center.name}. Please choose again.",
+            )
+    payload.preferred_center_id = payload.items[0].pickup_center_id
 
     # Aadhaar: both numbers and both card photos (one of each when the requester is the patient), with consent.
     if not payload.aadhar_consent:
@@ -420,11 +451,12 @@ def create_lease_request(
                     lease_request_id=lease.id,
                     sku_id=item["sku_id"],
                     quantity_requested=item.get("quantity_requested", 1),
+                    pickup_center_id=item["pickup_center_id"],
                 )
             )
 
-        # Create active blocks for available stock at preferred center
-        reserve_stock(db, lease, [item["sku_id"] for item in items_payload], release_at=None)
+        # Hold each device at the center it will be collected from.
+        reserve_stock(db, lease, [(item["sku_id"], item["pickup_center_id"]) for item in items_payload], release_at=None)
 
         db.commit()
     except IntegrityError:
@@ -511,6 +543,8 @@ def update_lease_request(
         for item in items_payload:
             if not db.get(SKU, item["sku_id"]):
                 raise HTTPException(status_code=400, detail=f"Invalid sku_id in items: {item['sku_id']}")
+            if item.get("pickup_center_id") and not db.get(Center, item["pickup_center_id"]):
+                raise HTTPException(status_code=400, detail="Invalid pickup center in items")
     if payload.status == "expired":
         raise HTTPException(status_code=400, detail="Requests are marked expired automatically when the pickup window passes")
     if payload.status == "closed":
@@ -549,6 +583,11 @@ def update_lease_request(
             for item in existing_items
             if item.asset_id
         }
+        # Lines are rewritten below; each keeps the pickup center of the existing line for the same model,
+        # in order, unless the update gives one.
+        pickup_centers_by_sku: dict[str, list[str | None]] = {}
+        for existing in existing_items:
+            pickup_centers_by_sku.setdefault(existing.sku_id, []).append(existing.pickup_center_id)
         issued_at_now = datetime.now(UTC).replace(tzinfo=None)
         active_due_dates: list[date] = []
         db.query(LeaseItem).filter(LeaseItem.lease_request_id == lease.id).delete()
@@ -569,12 +608,15 @@ def update_lease_request(
                 item_due_date = compute_due_date(lease.expected_duration, item_issued_at)
             if asset_id and item_due_date:
                 active_due_dates.append(item_due_date)
+            carried_centers = pickup_centers_by_sku.get(item["sku_id"], [])
+            carried_center = carried_centers.pop(0) if carried_centers else None
             db.add(
                 LeaseItem(
                     lease_request_id=lease.id,
                     sku_id=item["sku_id"],
                     quantity_requested=item.get("quantity_requested", 1),
                     asset_id=asset_id,
+                    pickup_center_id=item.get("pickup_center_id") or carried_center,
                     issued_at=item_issued_at,
                     issued_by=item_issued_by,
                     due_date=item_due_date,
@@ -602,12 +644,9 @@ def update_lease_request(
     pickup_deadline = datetime.now(UTC).replace(tzinfo=None) + timedelta(hours=PICKUP_WINDOW_HOURS)
     if was_expired and lease.status == "approved":
         # The old holds were released when the request expired, so re-approval reserves afresh.
-        line_items = (
-            items_payload
-            if items_payload is not None
-            else [{"sku_id": item.sku_id, "asset_id": item.asset_id} for item in existing_items]
-        )
-        reserve_stock(db, lease, [item["sku_id"] for item in line_items if not item.get("asset_id")], release_at=pickup_deadline)
+        db.flush()
+        open_lines = db.query(LeaseItem).filter(LeaseItem.lease_request_id == lease.id, LeaseItem.asset_id.is_(None)).all()
+        reserve_stock(db, lease, [(line.sku_id, line.pickup_center_id) for line in open_lines], release_at=pickup_deadline)
     if lease.status == "approved":
         db.query(SKUBlock).filter(
             SKUBlock.lease_request_id == lease.id,
