@@ -100,6 +100,38 @@ SMS_TEMPLATE_SEEDS: list[tuple[str, str, str | None]] = [
         "Reminder: Devices for Token: {token_number} are due on {due_date} . Please arrange for return to Mahesh Foundation MES center. - MHSFND",
         "1207178308496256310",
     ),
+    # Registered on DLT in October 2026 (header MHSFND). Each text must match its registration character for
+    # character, double spaces included; tests/test_sms_templates.py checks this. See app/notifications.py.
+    (
+        "mf_request_received",
+        "Mahesh Foundation: Your medical equipment request is received. Token:{token_number} . Track it at {track_url}   - MHSFND",
+        "1277179258580359181",
+    ),
+    (
+        "mf_request_approved",
+        "Mahesh Foundation: Request {token_number} approved. Collect from {center_name}  within 3 days. Contact {contact_name} {contact_mobile}  . Details: {track_url} - MHSFND",
+        "1277179258166424927",
+    ),
+    (
+        "mf_tracking_otp",
+        "Your OTP is {otp}  to view your Mahesh Foundation medical equipment request. Valid for 5 minutes. Please do not share it with anyone. - MHSFND",
+        "1277179258196035097",
+    ),
+    (
+        "mf_referrer_notice",
+        "Mahesh Foundation: This is to inform you that {requestor_name}  has listed you as a referrer for medical equipment request {token_number}. - MHSFND",
+        "1277179258745423631",
+    ),
+    (
+        "mf_extension_received",
+        "Mahesh Foundation: Your extension request for Token: {token_number} has been received and is under consideration . - MHSFND",
+        "1277179258409353603",
+    ),
+    (
+        "mf_extension_approved",
+        "Mahesh Foundation: Your extension request for Token {token_number} is approved. New return date: {due_date} . - MHSFND",
+        "1277179258261227432",
+    ),
     (
         "Reminder_overdue",
         "Reminder: Devices for Token: {token_number} are due on {due_date} . Please arrange for return to Mahesh Foundation MES center. - MHSFND",

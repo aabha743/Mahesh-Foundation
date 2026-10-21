@@ -114,7 +114,7 @@ class TrackingOtpTests(support.LeaseApiTestCase):
         self.assertEqual(response.json()["sent_to"], f"ending {lease.mobile[-2:]}")
         self.db.rollback()
         self.assertEqual(self.db.query(OTPSession).filter(OTPSession.mobile == lease.mobile, OTPSession.purpose == "track").count(), 1)
-        logged = self.db.query(NotificationLog).filter(NotificationLog.type == "otp_login", NotificationLog.recipient_mobile.like(f"%{lease.mobile}")).one()
+        logged = self.db.query(NotificationLog).filter(NotificationLog.type == "mf_tracking_otp", NotificationLog.recipient_mobile.like(f"%{lease.mobile}")).one()
         self.assertNotIn(CODE, logged.message)
         self.assertIn("******", logged.message)
 

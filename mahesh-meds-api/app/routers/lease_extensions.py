@@ -20,6 +20,7 @@ from app.permissions import (
 )
 from app.leasing import active_lease_items, evaluate_extension_eligibility
 from app.audit import write_audit_log
+from app.notifications import notify_extension_approved, notify_extension_received
 
 router = APIRouter()
 
@@ -101,6 +102,7 @@ def create_lease_extension(
         },
     )
     db.commit()
+    notify_extension_received(db, lease)
     return extension
 
 
@@ -199,4 +201,6 @@ def review_lease_extension(
         current_user=current_user,
     )
     db.commit()
+    if review_status == "approved":
+        notify_extension_approved(db, lease, extension)
     return extension

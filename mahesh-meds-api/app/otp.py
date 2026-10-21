@@ -19,6 +19,7 @@ from app.security import (
     hash_otp,
     verify_otp_hash,
 )
+from app.notifications import otp_event
 from app.services.sms import send_template_sms
 
 
@@ -79,7 +80,7 @@ def send_otp(db: Session, request: Request, mobile: str, purpose: str) -> bool:
     db.add(session)
     db.commit()
     delivered = send_template_sms(
-        mobile=mobile, event_name="otp_login", variables={"otp": otp}, db=db, secret_variables=("otp",)
+        mobile=mobile, event_name=otp_event(purpose), variables={"otp": otp}, db=db, secret_variables=("otp",)
     )
     if not delivered and os.getenv("SMS_ENABLED", "true").lower() == "true":
         session.is_used = True
