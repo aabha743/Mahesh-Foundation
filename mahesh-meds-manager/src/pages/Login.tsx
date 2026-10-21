@@ -6,7 +6,7 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { InputOTP, InputOTPGroup, InputOTPSlot } from "@/components/ui/input-otp";
-import { requestOTP, verifyOTP, getMe, type MeResponse } from "@/lib/api";
+import { ApiError, requestOTP, verifyOTP, getMe, type MeResponse } from "@/lib/api";
 import { useAuth } from "@/hooks/useAuth";
 import { getRoleViewPath } from "@/lib/roleRouting";
 
@@ -50,17 +50,8 @@ export default function Login() {
       setOtpValiditySeconds(response.expires_in || 300);
       setDebugOtp(response.debug_otp ?? null);
     } catch (err) {
-      if (err instanceof Error) {
-        if (err.message.includes("429") || err.message.includes("cooldown")) {
-          setError("Please wait 60 seconds before requesting another OTP");
-        } else if (err.message.includes("400") || err.message.includes("not registered")) {
-          setError("This number is not registered. Login is for staff only.");
-        } else {
-          setError(err.message);
-        }
-      } else {
-        setError("Failed to send OTP");
-      }
+      // 429 carries the reason: the 60-second wait, the hourly or daily limit, this device's limit, or a lock.
+      setError(err instanceof Error && err.message ? err.message : "Failed to send OTP");
     } finally {
       setLoading(false);
     }
@@ -90,19 +81,17 @@ export default function Login() {
         navigate(getRoleViewPath(onlyRole) ?? "/admin/dashboard", { replace: true });
       }
     } catch (err) {
-      if (err instanceof Error) {
-        if (err.message.includes("429") || err.message.includes("max attempts")) {
-          setError("Too many attempts. Please request a new OTP.");
-          setStep("phone");
-          setOtp("");
-          setDebugOtp(null);
-        } else if (err.message.includes("401") || err.message.includes("Invalid")) {
-          setError("Invalid OTP. Please try again.");
-        } else {
-          setError(err.message);
-        }
+      if (err instanceof ApiError && err.status === 429) {
+        // The code was cancelled after 5 wrong tries, the number is locked, or this device entered too many wrong codes.
+        setError(err.message);
+        setStep("phone");
+        setOtp("");
+        setDebugOtp(null);
+      } else if (err instanceof ApiError && err.status === 401) {
+        setError("Invalid OTP. Please try again.");
+        setOtp("");
       } else {
-        setError("Invalid OTP");
+        setError(err instanceof Error && err.message ? err.message : "Invalid OTP");
       }
     } finally {
       setLoading(false);
@@ -126,7 +115,9 @@ export default function Login() {
           <BrandLogo className="mb-4 justify-center" imageClassName="h-24 max-w-80" />
           <p className="text-xs text-muted-foreground">Staff Login Only</p>
           <p className="text-sm text-muted-foreground mt-2">
-            {step === "phone" ? "Sign in with your registered mobile number" : `OTP sent to +91 ${phone}`}
+            {step === "phone"
+              ? "Sign in with your registered mobile number"
+              : `If +91 ${phone} is a registered staff number, an OTP has been sent to it.`}
           </p>
         </CardHeader>
 

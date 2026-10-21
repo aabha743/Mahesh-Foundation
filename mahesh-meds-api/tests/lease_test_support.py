@@ -105,10 +105,16 @@ class LeaseApiTestCase(unittest.TestCase):
     def setUp(self):
         # Start each test without an open transaction (see sms_count).
         self.db.rollback()
-        # Every test client has the same address; test_aadhar_photos.py checks the per-device limit itself.
-        limit = patch("app.routers.lease_requests.MAX_REQUESTS_PER_DEVICE_PER_HOUR", 10_000)
-        limit.start()
-        self.addCleanup(limit.stop)
+        # Every test client has the same address, so the per-device limits are lifted here; test_aadhar_photos.py
+        # and test_staff_otp_limits.py check them with addresses of their own.
+        for name in (
+            "app.routers.lease_requests.MAX_REQUESTS_PER_DEVICE_PER_HOUR",
+            "app.routers.auth.MAX_LOGIN_OTP_REQUESTS_PER_DEVICE_PER_HOUR",
+            "app.otp.MAX_WRONG_CODES_PER_DEVICE_PER_HOUR",
+        ):
+            limit = patch(name, 10_000)
+            limit.start()
+            self.addCleanup(limit.stop)
 
     @classmethod
     def make_asset(cls, sku: SKU | None = None, center: Center | None = None, status: str = "available") -> Asset:

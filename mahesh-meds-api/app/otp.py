@@ -10,7 +10,7 @@ from fastapi import Request
 from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
-from app.models import OTPSession
+from app.models import AuditLog, OTPSession
 from app.security import (
     MAX_OTP_ATTEMPTS,
     OTP_COOLDOWN_SECONDS,
@@ -20,6 +20,26 @@ from app.security import (
     verify_otp_hash,
 )
 from app.services.sms import send_template_sms
+
+
+# Wrong codes entered on any OTP screen (staff login, tracking, handover), as recorded in the audit log.
+WRONG_CODE_ACTIONS = ("otp_verification_failed", "otp_locked_out", "track_otp_failed", "handover_otp_failed")
+MAX_WRONG_CODES_PER_DEVICE_PER_HOUR = 30
+WRONG_CODES_DETAIL = "Too many wrong codes from this device. Please try again in an hour."
+
+
+def too_many_wrong_codes(db: Session, request: Request) -> bool:
+    """True once a device (IP address) has entered MAX_WRONG_CODES_PER_DEVICE_PER_HOUR wrong codes in the last hour.
+    Checked before a code is looked at, so a blocked device cannot use up anyone's tries."""
+    ip = request.client.host if request.client else None
+    if not ip:
+        return False
+    wrong = db.query(AuditLog.id).filter(
+        AuditLog.action.in_(WRONG_CODE_ACTIONS),
+        AuditLog.ip_address == ip,
+        AuditLog.created_at >= func.date_sub(func.now(), text("INTERVAL 1 HOUR")),
+    ).count()
+    return wrong >= MAX_WRONG_CODES_PER_DEVICE_PER_HOUR
 
 
 class OtpCheckFailed(Exception):

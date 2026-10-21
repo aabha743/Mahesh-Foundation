@@ -13,7 +13,7 @@ from app.audit import write_audit_log
 from app.database import get_db
 from app.leasing import EXPIRED_REQUEST_DETAIL, HANDOVER_VERIFICATION_MINUTES, has_devices_to_issue
 from app.models import Center, LeaseHandoverVerification, LeaseRequest, OTPSession, User
-from app.otp import OtpCheckFailed, check_otp, in_cooldown, send_otp
+from app.otp import WRONG_CODES_DETAIL, OtpCheckFailed, check_otp, in_cooldown, send_otp, too_many_wrong_codes
 from app.permissions import enforce_center_resource_access, require_permission
 from app.schemas import HandoverOtpRequest, HandoverOtpVerify
 from app.security import MAX_OTP_ATTEMPTS, OTP_COOLDOWN_SECONDS, OTP_EXPIRE_MINUTES, validate_csrf
@@ -99,6 +99,8 @@ def verify_handover_otp(
     _: None = Depends(validate_csrf),
 ):
     """Check the code the person read out; if it is right, this staff member may issue devices for the request once."""
+    if too_many_wrong_codes(db, request):
+        raise HTTPException(status_code=429, detail=WRONG_CODES_DETAIL)
     lease = load_issuable_lease(db, lease_id, payload.center_id, current_user)
     try:
         check_otp(db, lease.mobile, otp_purpose(lease), payload.otp.strip())
