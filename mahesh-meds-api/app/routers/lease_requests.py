@@ -66,14 +66,12 @@ from app.leasing import (
     use_handover_verification,
 )
 from app.audit import write_audit_log
-from app.notifications import notify_request_approved, notify_request_received
+from app.notifications import notify_request_approved, notify_request_received, notify_request_rejected
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-# Who a rejected requester is told to contact (the rejection SMS's {contact_info}).
-REJECTION_CONTACT = "Mahesh Foundation team"
 # Public submissions carry photos, so one device (IP address) may send only this many per hour.
 MAX_REQUESTS_PER_DEVICE_PER_HOUR = 10
 
@@ -695,17 +693,7 @@ def update_lease_request(
     if became_approved:
         notify_request_approved(db, lease)
     elif became_rejected:
-        send_template_sms(
-            mobile=lease.mobile,
-            event_name="request_rejected_user",
-            variables={
-                "token_number": lease.token_number,
-                # Rejection reasons are not shared with requesters.
-                "contact_info": REJECTION_CONTACT,
-            },
-            db=db,
-            reference_id=lease.id,
-        )
+        notify_request_rejected(db, lease)
 
     if before.get("status") != "issued" and lease.status == "issued":
         db_items = db.query(LeaseItem).filter(LeaseItem.lease_request_id == lease.id).all()

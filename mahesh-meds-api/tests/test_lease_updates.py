@@ -188,7 +188,7 @@ class LeaseUpdateApiTests(support.LeaseApiTestCase):
         again = self.patch_as(self.approver, lease, {"status": "approved"})
 
         self.assertEqual((first.status_code, again.status_code), (200, 200), again.text)
-        self.assertEqual(self.sms_count(lease, "request_approved_user"), 1)
+        self.assertEqual(self.sms_count(lease, "request_approved_user") + self.sms_count(lease, "mf_request_approved"), 1)
         self.assertEqual(self.audit_count(lease, "approve_request"), 1)
 
     # --- pickup guidance -----------------------------------------------------

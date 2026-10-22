@@ -120,7 +120,7 @@ class RequestFormAndRejectionTests(support.LeaseApiTestCase):
 
     # --- rejecting a request ---------------------------------------------------
 
-    def test_reject_without_reason_sends_generic_contact(self):
+    def test_reject_without_reason_sends_a_number_to_call(self):
         lease = self.make_lease("pending", [None])
 
         response = self.patch_as(self.approver, lease, {"status": "rejected"})
@@ -129,10 +129,11 @@ class RequestFormAndRejectionTests(support.LeaseApiTestCase):
         self.reload(lease)
         self.assertEqual(lease.status, "rejected")
         self.assertIsNone(lease.rejection_reason)
+        # The pickup center's manager; tests/test_sms_templates.py covers a center without one.
         sms = self.db.query(NotificationLog).filter(
-            NotificationLog.reference_id == lease.id, NotificationLog.type == "request_rejected_user"
+            NotificationLog.reference_id == lease.id, NotificationLog.type == "mf_request_rejected"
         ).one()
-        self.assertIn("Mahesh Foundation team", sms.message)
+        self.assertIn(self.center_manager.mobile, sms.message)
 
     def test_reason_sent_by_an_old_screen_is_not_put_in_the_sms(self):
         lease = self.make_lease("pending", [None])
@@ -142,7 +143,8 @@ class RequestFormAndRejectionTests(support.LeaseApiTestCase):
         self.assertEqual(response.status_code, 200, response.text)
         self.db.rollback()
         sms = self.db.query(NotificationLog).filter(
-            NotificationLog.reference_id == lease.id, NotificationLog.type == "request_rejected_user"
+            NotificationLog.reference_id == lease.id,
+            NotificationLog.type.in_(("request_rejected_user", "mf_request_rejected")),
         ).one()
         self.assertNotIn("ICU", sms.message)
 

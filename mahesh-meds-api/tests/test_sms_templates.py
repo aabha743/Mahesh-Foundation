@@ -8,8 +8,9 @@ from fastapi.testclient import TestClient
 
 import lease_test_support as support
 from app.main import app
+from app.jobs.reminders import release_expired_blocks
 from app.models import LeaseExtension, LeaseItem, NotificationLog
-from app.notifications import DLT_VARIABLE_MAX, fit, sms_date, track_url
+from app.notifications import DLT_VARIABLE_MAX, fit, site_url, sms_date, track_url
 from app.security import create_access_token
 from app.services.sms import SMS_TEMPLATE_SEEDS
 
@@ -17,8 +18,14 @@ from app.services.sms import SMS_TEMPLATE_SEEDS
 REGISTERED = {
     "mf_request_received": ("1277179258580359181",
         "Mahesh Foundation: Your medical equipment request is received. Token:{#alphanumeric#} . Track it at {#url#}   - MHSFND"),
-    "mf_request_approved": ("1277179258166424927",
-        "Mahesh Foundation: Request {#alphanumeric#} approved. Collect from {#alphanumeric#}  within 3 days. Contact {#alphanumeric#} {#alphanumeric#}  . Details: {#url#} - MHSFND"),
+    "mf_request_approved": ("1277179265177418932",  # MF_Request_Approved_num (22 Oct)
+        "Mahesh Foundation: Request {#alphanumeric#} approved. Collect from {#alphanumeric#}  within 3 days. Contact {#alphanumeric#} {#cbn#}  . Track your request on: {#url#} - MHSFND"),
+    "mf_request_rejected": ("1277179265313329507",
+        "Mahesh Foundation: Request {#alphanumeric#} could not be approved. For any questions, please call {#cbn#} . - MHSFND"),
+    "mf_extension_not_approved": ("1277179265283139892",
+        "Mahesh Foundation: Your extension request for Token {#alphanumeric#} could not be approved. Please return the devices by {#alphanumeric#} or call {#cbn#} . - MHSFND"),
+    "mf_token_expired": ("1277179265582573786",
+        "Mahesh Foundation: Your request of token: {#alphanumeric#} has expired as it was not collected within 3 days. Please re-apply at {#url#} and get a new token. - MHSFND"),
     "mf_tracking_otp": ("1277179258196035097",
         "Your OTP is {#number#}  to view your Mahesh Foundation medical equipment request. Valid for 5 minutes. Please do not share it with anyone. - MHSFND"),
     "mf_referrer_notice": ("1277179258745423631",
@@ -28,7 +35,12 @@ REGISTERED = {
     "mf_extension_approved": ("1277179258261227432",
         "Mahesh Foundation: Your extension request for Token {#alphanumeric#} is approved. New return date: {#alphanumeric#} . - MHSFND"),
 }
-VARIABLE_TYPES = {"otp": "{#number#}", "track_url": "{#url#}"}  # every other variable is {#alphanumeric#}
+VARIABLE_TYPES = {  # every other variable is {#alphanumeric#}
+    "otp": "{#number#}",
+    "track_url": "{#url#}",
+    "site_url": "{#url#}",
+    "contact_mobile": "{#cbn#}",  # a whitelisted call-back number
+}
 
 
 class RegisteredTextTests(unittest.TestCase):
@@ -118,35 +130,69 @@ class NewSmsTests(support.LeaseApiTestCase):
         self.db.commit()
         return lease
 
-    def test_approval_names_the_pickup_centers_manager_when_switched_on(self):
+    def test_approval_names_the_pickup_centers_manager(self):
         lease = self.pending_at(self.center)
 
-        with patch.dict(os.environ, {"SMS_APPROVED_WITH_CONTACT": "true"}):
-            response = self.patch_as(self.approver, lease, {"status": "approved"})
+        response = self.patch_as(self.approver, lease, {"status": "approved"})
 
         self.assertEqual(response.status_code, 200, response.text)
         [approved] = self.sms(lease, "mf_request_approved")
         self.assertIn(f"Collect from {self.center.name}  within 3 days. Contact {self.center_manager.name} "
-                      f"{self.center_manager.mobile}  . Details: {track_url(lease.token_number)} - MHSFND", approved["message"])
+                      f"{self.center_manager.mobile}  . Track your request on: {track_url(lease.token_number)} - MHSFND",
+                      approved["message"])
         self.assertEqual(self.sms(lease, "request_approved_user"), [])
         self.assertEqual(len(self.sms(lease, "request_approved_center_manager")), 1)
 
     def test_a_center_without_a_manager_gets_the_earlier_approval_sms(self):
         lease = self.pending_at(self.other_center)  # no center manager there
 
-        with patch.dict(os.environ, {"SMS_APPROVED_WITH_CONTACT": "true"}):
+        self.patch_as(self.approver, lease, {"status": "approved"})
+
+        self.assertEqual(self.sms(lease, "mf_request_approved"), [])
+        self.assertEqual(len(self.sms(lease, "request_approved_user")), 1)
+
+    def test_approval_sms_with_contact_can_be_switched_off(self):
+        lease = self.pending_at(self.center)
+
+        with patch.dict(os.environ, {"SMS_APPROVED_WITH_CONTACT": "false"}):
             self.patch_as(self.approver, lease, {"status": "approved"})
 
         self.assertEqual(self.sms(lease, "mf_request_approved"), [])
         self.assertEqual(len(self.sms(lease, "request_approved_user")), 1)
 
-    def test_approval_sms_with_contact_is_off_by_default(self):
-        lease = self.pending_at(self.center)
+    # --- rejection and expiry ------------------------------------------------------------------------------
 
-        self.patch_as(self.approver, lease, {"status": "approved"})
+    def test_rejection_gives_the_pickup_center_managers_number(self):
+        lease = self.make_lease("pending", [None])  # pickup at the test center, which has a manager
 
-        self.assertEqual(self.sms(lease, "mf_request_approved"), [])
-        self.assertEqual(len(self.sms(lease, "request_approved_user")), 1)
+        self.patch_as(self.approver, lease, {"status": "rejected"})
+
+        [rejected] = self.sms(lease, "mf_request_rejected")
+        self.assertIn(f"Request {lease.token_number} could not be approved. For any questions, please call "
+                      f"{self.center_manager.mobile} . - MHSFND", rejected["message"])
+        self.assertEqual(self.sms(lease, "request_rejected_user"), [])
+
+    def test_rejection_without_a_manager_uses_the_earlier_sms(self):
+        lease = self.make_lease("pending", [None])
+        lease.preferred_center_id = self.other_center.id  # no center manager there
+        self.db.commit()
+
+        self.patch_as(self.approver, lease, {"status": "rejected"})
+
+        [rejected] = self.sms(lease, "request_rejected_user")
+        self.assertIn("Mahesh Foundation team", rejected["message"])
+        self.assertEqual(self.sms(lease, "mf_request_rejected"), [])
+
+    def test_an_expired_request_is_told_to_apply_again(self):
+        lease = self.make_lease("approved", [None], hold_release_at=support.utcnow() - timedelta(hours=1))
+
+        release_expired_blocks()
+
+        self.reload(lease)
+        self.assertEqual(lease.status, "expired")
+        [expired] = self.sms(lease, "mf_token_expired")
+        self.assertIn(f"Your request of token: {lease.token_number} has expired as it was not collected within 3 days. "
+                      f"Please re-apply at {site_url()} and get a new token. - MHSFND", expired["message"])
 
     # --- extensions ------------------------------------------------------------------------------------
 
@@ -180,6 +226,24 @@ class NewSmsTests(support.LeaseApiTestCase):
         self.assertIn(f"for Token {lease.token_number} is approved. New return date: {new_date} . - MHSFND", approved["message"])
         self.db.rollback()
         self.assertEqual(self.db.get(LeaseExtension, asked.json()["id"]).status, "approved")
+
+    def test_extension_not_approved_gives_the_return_date_and_a_number(self):
+        lease = self.issued_and_due()
+        asked = self.verified_client(lease.mobile).post("/api/v1/lease-extensions", json={
+            "token_number": lease.token_number,
+            "requested_due_date": (date.today() + timedelta(days=8)).isoformat(),
+            "reason": "Patient still recovering",
+        })
+        approver = TestClient(app, cookies={"access_token": create_access_token(self.approver.id), "csrf_token": support.CSRF})
+
+        decided = approver.patch(f"/api/v1/lease-extensions/{asked.json()['id']}", json={"status": "rejected"},
+                                 headers={"X-CSRF-Token": support.CSRF})
+
+        self.assertEqual(decided.status_code, 200, decided.text)
+        [refused] = self.sms(lease, "mf_extension_not_approved")
+        due = (date.today() + timedelta(days=3)).strftime("%d %b %Y")
+        self.assertIn(f"for Token {lease.token_number} could not be approved. Please return the devices by {due} "
+                      f"or call {self.center_manager.mobile} . - MHSFND", refused["message"])
 
     # --- OTP codes -------------------------------------------------------------------------------------
 

@@ -3,9 +3,11 @@
 SMS_NEW_TEMPLATES (default on): use the templates registered in October 2026 (request received with a link, referrer
 notice, tracking/handover OTP, extension received and approved). Turned off, everything goes out on the earlier
 templates, so a problem with the new ones can be undone with one setting.
-SMS_APPROVED_WITH_CONTACT (default off): send the approval SMS that names the pickup center's manager and number.
-It stays off until the DLT operator confirms a phone number may be sent in a normal (alphanumeric) variable;
-until then the earlier approval SMS is used.
+SMS_APPROVED_WITH_CONTACT (default on): the approval SMS names the pickup center's manager and number. Turned off,
+the earlier approval SMS (naming only the center team) is used.
+
+Phone numbers in SMS are whitelisted call-back numbers on DLT: only active center managers' numbers are sent, so a
+new center manager's number must be whitelisted before they are made a center manager.
 """
 
 import os
@@ -20,6 +22,8 @@ from app.services.sms import send_template_sms
 
 # The DLT portal accepts at most this many characters in one variable.
 DLT_VARIABLE_MAX = 40
+# Who a rejected requester is told to contact on the earlier template (its {contact_info}).
+REJECTION_CONTACT = "Mahesh Foundation team"
 
 
 def _setting(name: str, default: str) -> bool:
@@ -31,7 +35,7 @@ def new_templates() -> bool:
 
 
 def approved_with_contact() -> bool:
-    return _setting("SMS_APPROVED_WITH_CONTACT", "false")
+    return _setting("SMS_APPROVED_WITH_CONTACT", "true")
 
 
 def site_url() -> str:
@@ -56,6 +60,13 @@ def sms_date(value: date | None) -> str:
 def otp_event(purpose: str) -> str:
     """Staff login keeps its own template; tracking and handover codes use the tracking OTP template."""
     return "otp_login" if purpose == "login" or not new_templates() else "mf_tracking_otp"
+
+
+def center_managers(db: Session, center_id: str | None) -> list:
+    """Active center managers of a center, by name; the first is the one named in SMS."""
+    if not center_id:
+        return []
+    return sorted(active_users_with_role("center_manager", db, center_id=center_id), key=lambda user: user.name or "")
 
 
 def notify_request_received(db: Session, lease: LeaseRequest) -> None:
@@ -95,12 +106,7 @@ def _earlier_approval_sms(db: Session, lease: LeaseRequest, centers: list[dict])
 def notify_request_approved(db: Session, lease: LeaseRequest) -> None:
     """To the requester (one SMS per pickup center when the contact SMS is on) and to each center's managers."""
     centers, _ = build_fulfillment_plan(db, lease.id)
-    managers_by_center = {
-        center["center_id"]: sorted(
-            active_users_with_role("center_manager", db, center_id=center["center_id"]), key=lambda user: user.name or ""
-        )
-        for center in centers
-    }
+    managers_by_center = {center["center_id"]: center_managers(db, center["center_id"]) for center in centers}
 
     if new_templates() and approved_with_contact() and centers:
         without_manager = []
@@ -144,10 +150,61 @@ def notify_request_approved(db: Session, lease: LeaseRequest) -> None:
             )
 
 
+def notify_request_rejected(db: Session, lease: LeaseRequest) -> None:
+    """Gives the pickup center manager's number to call; without one, the earlier SMS names the foundation team."""
+    managers = center_managers(db, lease.preferred_center_id)
+    if new_templates() and managers:
+        send_template_sms(
+            mobile=lease.mobile,
+            event_name="mf_request_rejected",
+            variables={"token_number": lease.token_number, "contact_mobile": managers[0].mobile},
+            db=db,
+            reference_id=lease.id,
+        )
+        return
+    send_template_sms(
+        mobile=lease.mobile,
+        event_name="request_rejected_user",
+        # Rejection reasons are not shared with requesters.
+        variables={"token_number": lease.token_number, "contact_info": REJECTION_CONTACT},
+        db=db,
+        reference_id=lease.id,
+    )
+
+
+def notify_request_expired(db: Session, lease: LeaseRequest) -> None:
+    """The pickup window passed without collection: the requester can apply again on the site."""
+    if new_templates():
+        send_template_sms(
+            mobile=lease.mobile,
+            event_name="mf_token_expired",
+            variables={"token_number": lease.token_number, "site_url": site_url()},
+            db=db,
+            reference_id=lease.id,
+        )
+
+
 def notify_extension_received(db: Session, lease: LeaseRequest) -> None:
     if new_templates():
         send_template_sms(mobile=lease.mobile, event_name="mf_extension_received",
                           variables={"token_number": lease.token_number}, db=db, reference_id=lease.id)
+
+
+def notify_extension_rejected(db: Session, lease: LeaseRequest) -> None:
+    """Return date stays as it was; the number to call is the pickup center manager's (nothing is sent without one)."""
+    managers = center_managers(db, lease.preferred_center_id)
+    if new_templates() and managers:
+        send_template_sms(
+            mobile=lease.mobile,
+            event_name="mf_extension_not_approved",
+            variables={
+                "token_number": lease.token_number,
+                "due_date": sms_date(lease.due_date),
+                "contact_mobile": managers[0].mobile,
+            },
+            db=db,
+            reference_id=lease.id,
+        )
 
 
 def notify_extension_approved(db: Session, lease: LeaseRequest, extension: LeaseExtension) -> None:
