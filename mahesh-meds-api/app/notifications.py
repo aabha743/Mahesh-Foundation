@@ -1,10 +1,10 @@
 """SMS for request and extension events, on the DLT templates listed in app.services.sms.
 
-SMS_NEW_TEMPLATES (default on): use the templates registered in October 2026 (request received with a link, referrer
-notice, tracking/handover OTP, extension received and approved). Turned off, everything goes out on the earlier
-templates, so a problem with the new ones can be undone with one setting.
-SMS_APPROVED_WITH_CONTACT (default on): the approval SMS names the pickup center's manager and number. Turned off,
-the earlier approval SMS (naming only the center team) is used.
+SMS_NEW_TEMPLATES (default on): use the templates registered in October 2026 (the mf_* events in app.services.sms).
+Turned off, everything goes out on the earlier templates, so a problem with the new ones can be undone with one setting.
+SMS_TEMPLATES_OFF (default empty): comma-separated mf_* events not to use yet, such as templates still awaiting DLT
+approval. Each listed event keeps the earlier behaviour: approval and rejection go out on the earlier templates, the
+request-received SMS on the earlier one, and the others (referrer notice, expiry, extension messages) are not sent.
 
 Phone numbers in SMS are whitelisted call-back numbers on DLT: only active center managers' numbers are sent, so a
 new center manager's number must be whitelisted before they are made a center manager.
@@ -34,8 +34,13 @@ def new_templates() -> bool:
     return _setting("SMS_NEW_TEMPLATES", "true")
 
 
-def approved_with_contact() -> bool:
-    return _setting("SMS_APPROVED_WITH_CONTACT", "true")
+def templates_off() -> set[str]:
+    return {name.strip().lower() for name in os.getenv("SMS_TEMPLATES_OFF", "").split(",") if name.strip()}
+
+
+def template_on(event: str) -> bool:
+    """Whether one of the new templates is in use: SMS_NEW_TEMPLATES is on and the event is not in SMS_TEMPLATES_OFF."""
+    return new_templates() and event not in templates_off()
 
 
 def site_url() -> str:
@@ -59,7 +64,7 @@ def sms_date(value: date | None) -> str:
 
 def otp_event(purpose: str) -> str:
     """Staff login keeps its own template; tracking and handover codes use the tracking OTP template."""
-    return "otp_login" if purpose == "login" or not new_templates() else "mf_tracking_otp"
+    return "otp_login" if purpose == "login" or not template_on("mf_tracking_otp") else "mf_tracking_otp"
 
 
 def center_managers(db: Session, center_id: str | None) -> list:
@@ -71,18 +76,18 @@ def center_managers(db: Session, center_id: str | None) -> list:
 
 def notify_request_received(db: Session, lease: LeaseRequest) -> None:
     """To the requester, and to the referrer named on the request (unless that is the requester's own number)."""
-    if not new_templates():
+    if template_on("mf_request_received"):
+        send_template_sms(
+            mobile=lease.mobile,
+            event_name="mf_request_received",
+            variables={"token_number": lease.token_number, "track_url": track_url(lease.token_number)},
+            db=db,
+            reference_id=lease.id,
+        )
+    else:
         send_template_sms(mobile=lease.mobile, event_name="request_submitted_user",
                           variables={"token_number": lease.token_number}, db=db, reference_id=lease.id)
-        return
-    send_template_sms(
-        mobile=lease.mobile,
-        event_name="mf_request_received",
-        variables={"token_number": lease.token_number, "track_url": track_url(lease.token_number)},
-        db=db,
-        reference_id=lease.id,
-    )
-    if lease.reference_mobile and lease.reference_mobile != lease.mobile:
+    if template_on("mf_referrer_notice") and lease.reference_mobile and lease.reference_mobile != lease.mobile:
         send_template_sms(
             mobile=lease.reference_mobile,
             event_name="mf_referrer_notice",
@@ -104,11 +109,11 @@ def _earlier_approval_sms(db: Session, lease: LeaseRequest, centers: list[dict])
 
 
 def notify_request_approved(db: Session, lease: LeaseRequest) -> None:
-    """To the requester (one SMS per pickup center when the contact SMS is on) and to each center's managers."""
+    """To the requester (one SMS per pickup center on the new template) and to each center's managers."""
     centers, _ = build_fulfillment_plan(db, lease.id)
     managers_by_center = {center["center_id"]: center_managers(db, center["center_id"]) for center in centers}
 
-    if new_templates() and approved_with_contact() and centers:
+    if template_on("mf_request_approved") and centers:
         without_manager = []
         for center in centers:
             managers = managers_by_center[center["center_id"]]
@@ -153,7 +158,7 @@ def notify_request_approved(db: Session, lease: LeaseRequest) -> None:
 def notify_request_rejected(db: Session, lease: LeaseRequest) -> None:
     """Gives the pickup center manager's number to call; without one, the earlier SMS names the foundation team."""
     managers = center_managers(db, lease.preferred_center_id)
-    if new_templates() and managers:
+    if template_on("mf_request_rejected") and managers:
         send_template_sms(
             mobile=lease.mobile,
             event_name="mf_request_rejected",
@@ -174,7 +179,7 @@ def notify_request_rejected(db: Session, lease: LeaseRequest) -> None:
 
 def notify_request_expired(db: Session, lease: LeaseRequest) -> None:
     """The pickup window passed without collection: the requester can apply again on the site."""
-    if new_templates():
+    if template_on("mf_token_expired"):
         send_template_sms(
             mobile=lease.mobile,
             event_name="mf_token_expired",
@@ -185,7 +190,7 @@ def notify_request_expired(db: Session, lease: LeaseRequest) -> None:
 
 
 def notify_extension_received(db: Session, lease: LeaseRequest) -> None:
-    if new_templates():
+    if template_on("mf_extension_received"):
         send_template_sms(mobile=lease.mobile, event_name="mf_extension_received",
                           variables={"token_number": lease.token_number}, db=db, reference_id=lease.id)
 
@@ -193,7 +198,7 @@ def notify_extension_received(db: Session, lease: LeaseRequest) -> None:
 def notify_extension_rejected(db: Session, lease: LeaseRequest) -> None:
     """Return date stays as it was; the number to call is the pickup center manager's (nothing is sent without one)."""
     managers = center_managers(db, lease.preferred_center_id)
-    if new_templates() and managers:
+    if template_on("mf_extension_not_approved") and managers:
         send_template_sms(
             mobile=lease.mobile,
             event_name="mf_extension_not_approved",
@@ -208,7 +213,7 @@ def notify_extension_rejected(db: Session, lease: LeaseRequest) -> None:
 
 
 def notify_extension_approved(db: Session, lease: LeaseRequest, extension: LeaseExtension) -> None:
-    if new_templates():
+    if template_on("mf_extension_approved"):
         send_template_sms(
             mobile=lease.mobile,
             event_name="mf_extension_approved",

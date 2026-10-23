@@ -10,7 +10,7 @@ import lease_test_support as support
 from app.main import app
 from app.jobs.reminders import release_expired_blocks
 from app.models import LeaseExtension, LeaseItem, NotificationLog
-from app.notifications import DLT_VARIABLE_MAX, fit, site_url, sms_date, track_url
+from app.notifications import DLT_VARIABLE_MAX, fit, site_url, sms_date, template_on, track_url
 from app.security import create_access_token
 from app.services.sms import SMS_TEMPLATE_SEEDS
 
@@ -35,6 +35,8 @@ REGISTERED = {
     "mf_extension_approved": ("1277179258261227432",
         "Mahesh Foundation: Your extension request for Token {#alphanumeric#} is approved. New return date: {#alphanumeric#} . - MHSFND"),
 }
+# Awaiting DLT approval on 23 Oct 2026: the value set on the server until they are approved.
+AWAITING_APPROVAL = "mf_request_approved,mf_request_rejected,mf_extension_not_approved,mf_token_expired"
 VARIABLE_TYPES = {  # every other variable is {#alphanumeric#}
     "otp": "{#number#}",
     "track_url": "{#url#}",
@@ -60,6 +62,16 @@ class RegisteredTextTests(unittest.TestCase):
         self.assertEqual(fit("  Hyderabad  "), "Hyderabad")
         self.assertEqual(sms_date(date(2026, 10, 30)), "30 Oct 2026")
         self.assertEqual(track_url("MF-OCT-0001"), "https://maheshfoundation-medical.com/track/MF-OCT-0001")
+
+    def test_templates_can_be_switched_off_one_by_one(self):
+        with patch.dict(os.environ, {"SMS_TEMPLATES_OFF": " MF_Request_Approved , mf_token_expired,"}):
+            self.assertFalse(template_on("mf_request_approved"))
+            self.assertFalse(template_on("mf_token_expired"))
+            self.assertTrue(template_on("mf_request_received"))
+        with patch.dict(os.environ, {"SMS_TEMPLATES_OFF": "", "SMS_NEW_TEMPLATES": "false"}):
+            self.assertFalse(template_on("mf_request_received"))
+        with patch.dict(os.environ, {"SMS_TEMPLATES_OFF": ""}):
+            self.assertTrue(all(template_on(event) for event in REGISTERED))
 
 
 class NewSmsTests(support.LeaseApiTestCase):
@@ -151,10 +163,10 @@ class NewSmsTests(support.LeaseApiTestCase):
         self.assertEqual(self.sms(lease, "mf_request_approved"), [])
         self.assertEqual(len(self.sms(lease, "request_approved_user")), 1)
 
-    def test_approval_sms_with_contact_can_be_switched_off(self):
+    def test_approval_uses_the_earlier_sms_while_its_template_is_off(self):
         lease = self.pending_at(self.center)
 
-        with patch.dict(os.environ, {"SMS_APPROVED_WITH_CONTACT": "false"}):
+        with patch.dict(os.environ, {"SMS_TEMPLATES_OFF": AWAITING_APPROVAL}):
             self.patch_as(self.approver, lease, {"status": "approved"})
 
         self.assertEqual(self.sms(lease, "mf_request_approved"), [])
@@ -182,6 +194,25 @@ class NewSmsTests(support.LeaseApiTestCase):
         [rejected] = self.sms(lease, "request_rejected_user")
         self.assertIn("Mahesh Foundation team", rejected["message"])
         self.assertEqual(self.sms(lease, "mf_request_rejected"), [])
+
+    def test_rejection_uses_the_earlier_sms_while_its_template_is_off(self):
+        lease = self.make_lease("pending", [None])  # the test center has a manager
+
+        with patch.dict(os.environ, {"SMS_TEMPLATES_OFF": AWAITING_APPROVAL}):
+            self.patch_as(self.approver, lease, {"status": "rejected"})
+
+        self.assertEqual(len(self.sms(lease, "request_rejected_user")), 1)
+        self.assertEqual(self.sms(lease, "mf_request_rejected"), [])
+
+    def test_no_expiry_sms_while_its_template_is_off(self):
+        lease = self.make_lease("approved", [None], hold_release_at=support.utcnow() - timedelta(hours=1))
+
+        with patch.dict(os.environ, {"SMS_TEMPLATES_OFF": AWAITING_APPROVAL}):
+            release_expired_blocks()
+
+        self.reload(lease)
+        self.assertEqual(lease.status, "expired")
+        self.assertEqual(self.sms(lease, "mf_token_expired"), [])
 
     def test_an_expired_request_is_told_to_apply_again(self):
         lease = self.make_lease("approved", [None], hold_release_at=support.utcnow() - timedelta(hours=1))
@@ -244,6 +275,22 @@ class NewSmsTests(support.LeaseApiTestCase):
         due = (date.today() + timedelta(days=3)).strftime("%d %b %Y")
         self.assertIn(f"for Token {lease.token_number} could not be approved. Please return the devices by {due} "
                       f"or call {self.center_manager.mobile} . - MHSFND", refused["message"])
+
+    def test_no_extension_refusal_sms_while_its_template_is_off(self):
+        lease = self.issued_and_due()
+        with patch.dict(os.environ, {"SMS_TEMPLATES_OFF": AWAITING_APPROVAL}):
+            asked = self.verified_client(lease.mobile).post("/api/v1/lease-extensions", json={
+                "token_number": lease.token_number,
+                "requested_due_date": (date.today() + timedelta(days=8)).isoformat(),
+                "reason": "Patient still recovering",
+            })
+            approver = TestClient(app, cookies={"access_token": create_access_token(self.approver.id), "csrf_token": support.CSRF})
+            decided = approver.patch(f"/api/v1/lease-extensions/{asked.json()['id']}", json={"status": "rejected"},
+                                     headers={"X-CSRF-Token": support.CSRF})
+
+        self.assertEqual(decided.status_code, 200, decided.text)
+        self.assertEqual(self.sms(lease, "mf_extension_not_approved"), [])
+        self.assertEqual(len(self.sms(lease, "mf_extension_received")), 1)  # approved on DLT, so still sent
 
     # --- OTP codes -------------------------------------------------------------------------------------
 
