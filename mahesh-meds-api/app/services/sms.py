@@ -104,13 +104,13 @@ SMS_TEMPLATE_SEEDS: list[tuple[str, str, str | None]] = [
     # character, double spaces included; tests/test_sms_templates.py checks this. See app/notifications.py.
     (
         "mf_request_received",
-        "Mahesh Foundation: Your medical equipment request is received. Token:{token_number} . Track it at {track_url}   - MHSFND",
+        "Mahesh Foundation: Your medical equipment request is received. Token:{token_number} . Track it at {site_url}   - MHSFND",
         "1277179258580359181",
     ),
     (
         # MF_Request_Approved_num: the contact number is a whitelisted call-back number ({#cbn#}).
         "mf_request_approved",
-        "Mahesh Foundation: Request {token_number} approved. Collect from {center_name}  within 3 days. Contact {contact_name} {contact_mobile}  . Track your request on: {track_url} - MHSFND",
+        "Mahesh Foundation: Request {token_number} approved. Collect from {center_name}  within 3 days. Contact {contact_name} {contact_mobile}  . Track your request on: {site_url} - MHSFND",
         "1277179265177418932",
     ),
     (
