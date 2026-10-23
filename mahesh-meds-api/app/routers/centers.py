@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models import Center, User
-from app.schemas import CenterCreate, CenterOut
+from app.schemas import CenterCreate, CenterOut, CenterUpdate
 from app.security import validate_csrf
 from app.permissions import require_permission
 from app.audit import write_audit_log
@@ -59,6 +59,49 @@ def delete_center(
     )
     db.commit()
     return {"status": "deleted"}
+
+
+@router.patch("/api/v1/centers/{center_id}", response_model=CenterOut)
+def update_center(
+    center_id: str,
+    payload: CenterUpdate,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("centers.manage")),
+    _: None = Depends(validate_csrf),
+):
+    """Updates the fields sent (the Centers page's edit form) and writes an audit event with old and new values."""
+    center = db.get(Center, center_id)
+    if not center:
+        raise HTTPException(status_code=404, detail="Center not found")
+
+    changes = {
+        field: value
+        for field, value in payload.model_dump(exclude_unset=True).items()
+        if getattr(center, field) != value
+    }
+    if not changes:
+        return center
+
+    before = {field: getattr(center, field) for field in changes}
+    for field, value in changes.items():
+        setattr(center, field, value)
+    db.commit()
+    db.refresh(center)
+
+    write_audit_log(
+        db,
+        request,
+        action="center_updated",
+        entity_type="center",
+        entity_id=center.id,
+        center_id=center.id,
+        old_value=before,
+        new_value=changes,
+        current_user=current_user,
+    )
+    db.commit()
+    return center
 
 
 @router.post("/api/v1/centers", response_model=CenterOut)

@@ -8,12 +8,19 @@ FastAPI (routes)
 SQLAlchemy Models (DB mapping)
       ↓
 Database (MySQL)'''
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 from datetime import date, datetime
 from typing import Annotated
 
 MobileNumber = Annotated[str, Field(pattern=r"^\d{10}$")]
 AadharNumber = Annotated[str, Field(pattern=r"^\d{12}$")]
+
+# Center fields, limited to the sizes of the centers columns so a value that does not fit is refused with 422.
+CenterName = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=150)]
+CenterPlace = Annotated[str, Field(max_length=100)]  # city, state
+PinCode = Annotated[str, Field(max_length=10)]
+ContactPerson = Annotated[str, Field(max_length=150)]
+ContactPhone = Annotated[str, Field(max_length=15)]
 
 
 # --- Centers ---
@@ -29,7 +36,31 @@ class CenterBase(BaseModel):
 
 
 class CenterCreate(CenterBase):
-    pass
+    name: CenterName
+    city: CenterPlace | None = None
+    state: CenterPlace | None = None
+    pin_code: PinCode | None = None
+    contact_person: ContactPerson | None = None
+    contact_phone: ContactPhone | None = None
+
+
+class CenterUpdate(BaseModel):
+    """Changes to a center: fields left out stay as they are."""
+    name: CenterName | None = None
+    address: str | None = None
+    city: CenterPlace | None = None
+    state: CenterPlace | None = None
+    pin_code: PinCode | None = None
+    contact_person: ContactPerson | None = None
+    contact_phone: ContactPhone | None = None
+    is_active: bool | None = None
+
+    @model_validator(mode="after")
+    def _name_and_status_not_cleared(self):
+        for field in ("name", "is_active"):
+            if field in self.model_fields_set and getattr(self, field) is None:
+                raise ValueError(f"{field} cannot be empty")
+        return self
 
 
 class CenterOut(CenterBase):
