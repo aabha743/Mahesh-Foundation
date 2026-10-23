@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from app.database import SessionLocal
 from app.models import AuditLog, LeaseItem, LeaseRequest, NotificationLog, SKUBlock
+from app.notifications import notify_request_expired
 from app.services.sms import format_mobile, send_template_sms
 
 logger = logging.getLogger(__name__)
@@ -131,8 +132,9 @@ def _overdue_holds(db: Session, now_time: datetime, lease_request_id: str | None
     return query
 
 
-def _release_request_holds(db: Session, lease_request_id: str, now_time: datetime) -> None:
-    """Release one request's overdue holds; expire the request if nothing was ever issued on it."""
+def _release_request_holds(db: Session, lease_request_id: str, now_time: datetime) -> LeaseRequest | None:
+    """Release one request's overdue holds; expire the request if nothing was ever issued on it.
+    Returns the request when it was expired."""
     req = db.get(LeaseRequest, lease_request_id)
     has_issued_lines = (
         db.query(LeaseItem.id)
@@ -160,8 +162,9 @@ def _release_request_holds(db: Session, lease_request_id: str, now_time: datetim
             )
         )
         logger.info("Request %s expired: pickup window passed without collection", req.token_number)
-    else:
-        logger.info("Released overdue stock holds for request %s (%s)", lease_request_id, reason)
+        return req
+    logger.info("Released overdue stock holds for request %s (%s)", lease_request_id, reason)
+    return None
 
 
 def release_expired_blocks() -> None:
@@ -178,10 +181,16 @@ def release_expired_blocks() -> None:
         ]
         for lease_request_id in lease_request_ids:
             try:
-                _release_request_holds(db, lease_request_id, now_time)
+                expired = _release_request_holds(db, lease_request_id, now_time)
                 db.commit()
             except Exception:
                 db.rollback()
                 logger.exception("Could not release overdue stock holds for request %s", lease_request_id)
+                continue
+            if expired:
+                try:
+                    notify_request_expired(db, expired)
+                except Exception:
+                    logger.exception("Could not send the expiry SMS for request %s", expired.token_number)
     finally:
         db.close()

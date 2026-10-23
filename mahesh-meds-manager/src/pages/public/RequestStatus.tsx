@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { ArchiveRestore, CalendarClock, CheckCircle, Clock, Hourglass, Package, Search, XCircle } from "lucide-react";
 import { format, formatDistanceToNow, parseISO } from "date-fns";
 import { Card, CardContent } from "@/components/ui/card";
@@ -177,7 +177,9 @@ function mapLeaseLookupToStatusResult(
 export default function RequestStatus() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const [query, setQuery] = useState(searchParams.get("token") || searchParams.get("mobile") || "");
+  // SMS links point to /track/<token>; /status?token= and ?mobile= work too.
+  const { token: tokenInPath } = useParams();
+  const [query, setQuery] = useState(searchParams.get("token") || tokenInPath || searchParams.get("mobile") || "");
   const [result, setResult] = useState<StatusResult | null>(null);
   const [matches, setMatches] = useState<StatusResult[]>([]);
   const [searched, setSearched] = useState(false);
@@ -187,14 +189,14 @@ export default function RequestStatus() {
   const [otpFor, setOtpFor] = useState<string | null>(null);
 
   useEffect(() => {
-    const tokenParam = searchParams.get("token");
+    const tokenParam = searchParams.get("token") || tokenInPath;
     const mobileParam = searchParams.get("mobile");
     const initialQuery = tokenParam || mobileParam || "";
     if (initialQuery) {
       setQuery(initialQuery);
       void doSearch(initialQuery);
     }
-  }, [searchParams]);
+  }, [searchParams, tokenInPath]);
 
   async function doSearch(nextQuery: string) {
     if (!nextQuery.trim()) return;

@@ -34,7 +34,6 @@ from app.services.sms import send_template_sms
 from app.security import get_track_mobile, validate_csrf
 from app.permissions import (
     active_users_with_permission,
-    active_users_with_role,
     enforce_center_resource_access,
     ensure_can_view_request,
     get_optional_user,
@@ -50,11 +49,9 @@ from app.leasing import (
     RETURNABLE_LEASE_DB_STATUSES,
     RETURN_CONDITION_ASSET_STATUS,
     asset_status_to_api,
-    build_fulfillment_plan,
     build_public_lease_lookup_result,
     compute_due_date,
     describe_return_condition,
-    fulfillment_center_names,
     fulfillment_plan_for,
     lease_devices,
     lease_status_to_api,
@@ -69,13 +66,12 @@ from app.leasing import (
     use_handover_verification,
 )
 from app.audit import write_audit_log
+from app.notifications import notify_request_approved, notify_request_received, notify_request_rejected
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-# Who a rejected requester is told to contact (the rejection SMS's {contact_info}).
-REJECTION_CONTACT = "Mahesh Foundation team"
 # Public submissions carry photos, so one device (IP address) may send only this many per hour.
 MAX_REQUESTS_PER_DEVICE_PER_HOUR = 10
 
@@ -479,13 +475,7 @@ def create_lease_request(
     )
     db.commit()
 
-    send_template_sms(
-        mobile=lease.mobile,
-        event_name="request_submitted_user",
-        variables={"token_number": lease.token_number},
-        db=db,
-        reference_id=lease.id,
-    )
+    notify_request_received(db, lease)
     sku_ids = [item["sku_id"] for item in items_payload]
     skus = db.query(SKU).filter(SKU.id.in_(sku_ids)).all()
     items_str = ", ".join(sku.name for sku in skus) if skus else "N/A"
@@ -701,44 +691,9 @@ def update_lease_request(
     db.commit()
 
     if became_approved:
-        fulfillment_centers, fulfillment_message = build_fulfillment_plan(db, lease.id)
-        center_names_str = fulfillment_center_names(fulfillment_centers) or "our center"
-        send_template_sms(
-            mobile=lease.mobile,
-            event_name="request_approved_user",
-            variables={
-                "token_number": lease.token_number,
-                "center_name": center_names_str,
-                "pickup_guidance": f"{center_names_str} team",
-            },
-            db=db,
-            reference_id=lease.id,
-        )
-        for center in fulfillment_centers:
-            for manager in active_users_with_role("center_manager", db, center_id=center["center_id"]):
-                send_template_sms(
-                    mobile=manager.mobile,
-                    event_name="request_approved_center_manager",
-                    variables={
-                        "token_number": lease.token_number,
-                        "requestor_name": lease.requestor_name,
-                        "center_name": center["center_name"],
-                    },
-                    db=db,
-                    reference_id=lease.id,
-                )
+        notify_request_approved(db, lease)
     elif became_rejected:
-        send_template_sms(
-            mobile=lease.mobile,
-            event_name="request_rejected_user",
-            variables={
-                "token_number": lease.token_number,
-                # Rejection reasons are not shared with requesters.
-                "contact_info": REJECTION_CONTACT,
-            },
-            db=db,
-            reference_id=lease.id,
-        )
+        notify_request_rejected(db, lease)
 
     if before.get("status") != "issued" and lease.status == "issued":
         db_items = db.query(LeaseItem).filter(LeaseItem.lease_request_id == lease.id).all()

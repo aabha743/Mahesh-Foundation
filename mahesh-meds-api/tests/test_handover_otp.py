@@ -111,7 +111,7 @@ class HandoverOtpTests(support.LeaseApiTestCase):
         sessions = self.db.query(OTPSession).filter(OTPSession.mobile == lease.mobile).all()
         self.assertEqual([s.purpose for s in sessions], [f"issue:{lease.id}"])
         logged = self.db.query(NotificationLog).filter(
-            NotificationLog.type == "otp_login", NotificationLog.recipient_mobile.like(f"%{lease.mobile}")
+            NotificationLog.type == "mf_tracking_otp", NotificationLog.recipient_mobile.like(f"%{lease.mobile}")
         ).one()
         self.assertNotIn(CODE, logged.message)
         self.db.rollback()
