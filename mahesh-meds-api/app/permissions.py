@@ -28,7 +28,7 @@ PERMISSION_CATALOG: dict[str, str] = {
     "assets.create": "Create new assets in the system.",
     "assets.update": "Update asset details, status, soft delete, and ownership assignments.",
     "skus.manage": "Create, update, and soft delete SKUs.",
-    "centers.manage": "Create and soft delete centers.",
+    "centers.manage": "Create, edit and soft delete centers.",
     "requests.approve": "Approve lease requests.",
     "requests.reject": "Reject lease requests.",
     "requests.edit": "Edit lease requests and fulfillment notes.",
