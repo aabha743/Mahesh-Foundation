@@ -10,7 +10,7 @@ import lease_test_support as support
 from app.main import app
 from app.jobs.reminders import release_expired_blocks
 from app.models import LeaseExtension, LeaseItem, NotificationLog
-from app.notifications import DLT_VARIABLE_MAX, fit, site_url, sms_date, template_on, track_url
+from app.notifications import DLT_VARIABLE_MAX, fit, site_url, sms_date, template_on
 from app.security import create_access_token
 from app.services.sms import SMS_TEMPLATE_SEEDS
 
@@ -39,8 +39,7 @@ REGISTERED = {
 AWAITING_APPROVAL = "mf_request_approved,mf_request_rejected,mf_extension_not_approved,mf_token_expired"
 VARIABLE_TYPES = {  # every other variable is {#alphanumeric#}
     "otp": "{#number#}",
-    "track_url": "{#url#}",
-    "site_url": "{#url#}",
+    "site_url": "{#url#}",  # only the bare site address is whitelisted on DLT
     "contact_mobile": "{#cbn#}",  # a whitelisted call-back number
 }
 
@@ -61,7 +60,9 @@ class RegisteredTextTests(unittest.TestCase):
         self.assertEqual(len(fit("A" * 60)), DLT_VARIABLE_MAX)
         self.assertEqual(fit("  Hyderabad  "), "Hyderabad")
         self.assertEqual(sms_date(date(2026, 10, 30)), "30 Oct 2026")
-        self.assertEqual(track_url("MF-OCT-0001"), "https://maheshfoundation-medical.com/track/MF-OCT-0001")
+        self.assertEqual(site_url(), "https://maheshfoundation-medical.com")
+        with patch.dict(os.environ, {"PUBLIC_SITE_URL": "https://maheshfoundation-medical.com/ "}):
+            self.assertEqual(site_url(), "https://maheshfoundation-medical.com")
 
     def test_templates_can_be_switched_off_one_by_one(self):
         with patch.dict(os.environ, {"SMS_TEMPLATES_OFF": " MF_Request_Approved , mf_token_expired,"}):
@@ -114,7 +115,8 @@ class NewSmsTests(support.LeaseApiTestCase):
         [received] = self.sms(lease, "mf_request_received")
         [referrer] = self.sms(lease, "mf_referrer_notice")
         self.assertTrue(received["recipient_mobile"].endswith(lease.mobile))
-        self.assertIn(f"Token:{lease.token_number} . Track it at {track_url(lease.token_number)}   - MHSFND", received["message"])
+        self.assertIn(f"Token:{lease.token_number} . Track it at {site_url()}   - MHSFND", received["message"])
+        self.assertNotIn("/track/", received["message"])  # any other link is not delivered
         self.assertTrue(referrer["recipient_mobile"].endswith("9876500022"))
         self.assertIn("This is to inform you that Sms Test Requestor  has listed you", referrer["message"])
         self.assertEqual(self.sms(lease, "request_submitted_user"), [])
@@ -150,8 +152,9 @@ class NewSmsTests(support.LeaseApiTestCase):
         self.assertEqual(response.status_code, 200, response.text)
         [approved] = self.sms(lease, "mf_request_approved")
         self.assertIn(f"Collect from {self.center.name}  within 3 days. Contact {self.center_manager.name} "
-                      f"{self.center_manager.mobile}  . Track your request on: {track_url(lease.token_number)} - MHSFND",
+                      f"{self.center_manager.mobile}  . Track your request on: {site_url()} - MHSFND",
                       approved["message"])
+        self.assertNotIn("/track/", approved["message"])
         self.assertEqual(self.sms(lease, "request_approved_user"), [])
         self.assertEqual(len(self.sms(lease, "request_approved_center_manager")), 1)
 

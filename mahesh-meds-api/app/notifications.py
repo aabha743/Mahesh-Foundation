@@ -8,6 +8,8 @@ request-received SMS on the earlier one, and the others (referrer notice, expiry
 
 Phone numbers in SMS are whitelisted call-back numbers on DLT: only active center managers' numbers are sent, so a
 new center manager's number must be whitelisted before they are made a center manager.
+Links are the site address only (PUBLIC_SITE_URL): that is the one URL whitelisted on DLT, and an SMS with any other
+link, even a page on the same site, is accepted by BulkSMS but never delivered.
 """
 
 import os
@@ -44,12 +46,8 @@ def template_on(event: str) -> bool:
 
 
 def site_url() -> str:
+    """The link in SMS: the site address whitelisted on DLT, with nothing after it."""
     return os.getenv("PUBLIC_SITE_URL", "https://maheshfoundation-medical.com").strip().rstrip("/")
-
-
-def track_url(token: str) -> str:
-    """Link to the request's status page (the visitor still verifies the mobile by OTP there)."""
-    return f"{site_url()}/track/{token}"
 
 
 def fit(value: str | None) -> str:
@@ -80,7 +78,7 @@ def notify_request_received(db: Session, lease: LeaseRequest) -> None:
         send_template_sms(
             mobile=lease.mobile,
             event_name="mf_request_received",
-            variables={"token_number": lease.token_number, "track_url": track_url(lease.token_number)},
+            variables={"token_number": lease.token_number, "site_url": site_url()},
             db=db,
             reference_id=lease.id,
         )
@@ -129,7 +127,7 @@ def notify_request_approved(db: Session, lease: LeaseRequest) -> None:
                     "center_name": fit(center["center_name"]),
                     "contact_name": fit(contact.name),
                     "contact_mobile": contact.mobile,
-                    "track_url": track_url(lease.token_number),
+                    "site_url": site_url(),
                 },
                 db=db,
                 reference_id=lease.id,
