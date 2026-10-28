@@ -60,6 +60,7 @@ from app.leasing import (
     normalize_public_tracking_mobile,
     available_at,
     center_names_by_id,
+    release_holds_for_issued,
     reserve_stock,
     resolve_lease_db_status,
     settle_lease_after_return,
@@ -497,6 +498,24 @@ def create_lease_request(
     }
 
 
+def _audit_issue_refused_without_otp(db: Session, request: Request, lease: LeaseRequest, devices: int, user: User) -> None:
+    """Record an attempt to issue devices without the requester's handover OTP (refused with 428). Nothing else in
+    the update has been written yet, so it is rolled back and the audit row is committed on its own."""
+    lease_id, token = lease.id, lease.token_number
+    db.rollback()
+    write_audit_log(
+        db,
+        request,
+        action="issue_refused_no_otp",
+        entity_type="lease_request",
+        entity_id=lease_id,
+        center_id=user.center_id,
+        new_value={"token": token, "devices": devices},
+        current_user=user,
+    )
+    db.commit()
+
+
 @router.patch("/api/v1/lease-requests/{lease_id}", response_model=LeaseRequestOut)
 def update_lease_request(
     lease_id: str,
@@ -550,6 +569,7 @@ def update_lease_request(
         if payload.status not in {"approved", "rejected"} or assigns_devices:
             raise HTTPException(status_code=400, detail=EXPIRED_REQUEST_DETAIL)
     handover_verification_id = None
+    issued_now: list[tuple[str, str]] = []  # (model, center the device came from) for devices issued in this update
     if items_payload is not None:
         assigned_before = {item.asset_id for item in existing_items if item.asset_id}
         newly_issued = [item for item in items_payload if item.get("asset_id") and item["asset_id"] not in assigned_before]
@@ -557,8 +577,14 @@ def update_lease_request(
             if previous_status not in {"approved", "issued"}:
                 raise HTTPException(status_code=400, detail="Devices can only be issued against an approved request")
             # The person collecting the devices must have confirmed the OTP sent to the request's mobile.
-            handover_verification_id = use_handover_verification(db, lease, current_user).id
+            try:
+                handover_verification_id = use_handover_verification(db, lease, current_user).id
+            except HTTPException as refused:
+                if refused.status_code == 428:
+                    _audit_issue_refused_without_otp(db, request, lease, len(newly_issued), current_user)
+                raise
             lease_devices(db, lease, newly_issued, current_user)
+            issued_now = [(item["sku_id"], db.get(Asset, item["asset_id"]).center_id) for item in newly_issued]
     if "status" in data and data["status"] is not None:
         data["status"] = lease_status_to_db(data["status"])
         # "active" also covers a partly returned request; don't turn it back into a fully issued one
@@ -638,6 +664,8 @@ def update_lease_request(
         open_lines = db.query(LeaseItem).filter(LeaseItem.lease_request_id == lease.id, LeaseItem.asset_id.is_(None)).all()
         reserve_stock(db, lease, [(line.sku_id, line.pickup_center_id) for line in open_lines], release_at=pickup_deadline)
     if lease.status == "approved":
+        # Partly issued: only the lines still to be issued keep a hold.
+        release_holds_for_issued(db, lease, issued_now)
         db.query(SKUBlock).filter(
             SKUBlock.lease_request_id == lease.id,
             SKUBlock.status == "blocked"

@@ -129,11 +129,11 @@ class RequestFormAndRejectionTests(support.LeaseApiTestCase):
         self.reload(lease)
         self.assertEqual(lease.status, "rejected")
         self.assertIsNone(lease.rejection_reason)
-        # The pickup center's manager; tests/test_sms_templates.py covers a center without one.
+        # The foundation's number (app.notifications.FOUNDATION_CONTACT_MOBILE).
         sms = self.db.query(NotificationLog).filter(
             NotificationLog.reference_id == lease.id, NotificationLog.type == "mf_request_rejected"
         ).one()
-        self.assertIn(self.center_manager.mobile, sms.message)
+        self.assertIn("9849001740", sms.message)
 
     def test_reason_sent_by_an_old_screen_is_not_put_in_the_sms(self):
         lease = self.make_lease("pending", [None])

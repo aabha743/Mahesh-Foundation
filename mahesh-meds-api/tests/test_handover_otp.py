@@ -216,6 +216,15 @@ class HandoverOtpTests(support.LeaseApiTestCase):
         self.assertEqual([item.asset_id for item in self.items(lease)], [None])
         self.assertEqual(lease.status, "approved")
         self.assertEqual(self.sms_count(lease, "device_issued_user"), 0)
+        # The refusal itself is recorded, with who tried and how many devices.
+        self.db.rollback()
+        [refused] = self.db.query(AuditLog).filter(
+            AuditLog.entity_id == lease.id, AuditLog.action == "issue_refused_no_otp"
+        ).all()
+        self.assertEqual((refused.user_id, refused.center_id), (self.center_manager.id, self.center.id))
+        self.assertEqual((refused.new_value["token"], refused.new_value["devices"]), (lease.token_number, 1))
+        self.assertEqual(self.audit_count(lease, "request_updated"), 0)
+        self.db.rollback()
 
     def test_one_otp_one_handover(self):
         lease = self.lease(lines=[None, None])

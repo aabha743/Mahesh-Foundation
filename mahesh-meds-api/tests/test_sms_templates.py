@@ -10,7 +10,7 @@ import lease_test_support as support
 from app.main import app
 from app.jobs.reminders import release_expired_blocks
 from app.models import LeaseExtension, LeaseItem, NotificationLog
-from app.notifications import DLT_VARIABLE_MAX, fit, site_url, sms_date, template_on
+from app.notifications import DLT_VARIABLE_MAX, FOUNDATION_CONTACT_MOBILE, fit, site_url, sms_date, template_on
 from app.security import create_access_token
 from app.services.sms import SMS_TEMPLATE_SEEDS
 
@@ -177,26 +177,28 @@ class NewSmsTests(support.LeaseApiTestCase):
 
     # --- rejection and expiry ------------------------------------------------------------------------------
 
-    def test_rejection_gives_the_pickup_center_managers_number(self):
+    def test_rejection_gives_the_foundations_number(self):
         lease = self.make_lease("pending", [None])  # pickup at the test center, which has a manager
 
         self.patch_as(self.approver, lease, {"status": "rejected"})
 
         [rejected] = self.sms(lease, "mf_request_rejected")
+        self.assertEqual(FOUNDATION_CONTACT_MOBILE, "9849001740")
         self.assertIn(f"Request {lease.token_number} could not be approved. For any questions, please call "
-                      f"{self.center_manager.mobile} . - MHSFND", rejected["message"])
+                      f"9849001740 . - MHSFND", rejected["message"])
+        self.assertNotIn(self.center_manager.mobile, rejected["message"])
         self.assertEqual(self.sms(lease, "request_rejected_user"), [])
 
-    def test_rejection_without_a_manager_uses_the_earlier_sms(self):
+    def test_rejection_at_a_center_without_a_manager_also_gives_the_foundations_number(self):
         lease = self.make_lease("pending", [None])
         lease.preferred_center_id = self.other_center.id  # no center manager there
         self.db.commit()
 
         self.patch_as(self.approver, lease, {"status": "rejected"})
 
-        [rejected] = self.sms(lease, "request_rejected_user")
-        self.assertIn("Mahesh Foundation team", rejected["message"])
-        self.assertEqual(self.sms(lease, "mf_request_rejected"), [])
+        [rejected] = self.sms(lease, "mf_request_rejected")
+        self.assertIn("please call 9849001740 . - MHSFND", rejected["message"])
+        self.assertEqual(self.sms(lease, "request_rejected_user"), [])
 
     def test_rejection_uses_the_earlier_sms_while_its_template_is_off(self):
         lease = self.make_lease("pending", [None])  # the test center has a manager
@@ -277,7 +279,8 @@ class NewSmsTests(support.LeaseApiTestCase):
         [refused] = self.sms(lease, "mf_extension_not_approved")
         due = (date.today() + timedelta(days=3)).strftime("%d %b %Y")
         self.assertIn(f"for Token {lease.token_number} could not be approved. Please return the devices by {due} "
-                      f"or call {self.center_manager.mobile} . - MHSFND", refused["message"])
+                      f"or call 9849001740 . - MHSFND", refused["message"])
+        self.assertNotIn(self.center_manager.mobile, refused["message"])
 
     def test_no_extension_refusal_sms_while_its_template_is_off(self):
         lease = self.issued_and_due()
