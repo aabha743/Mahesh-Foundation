@@ -6,8 +6,9 @@ SMS_TEMPLATES_OFF (default empty): comma-separated mf_* events not to use yet, s
 approval. Each listed event keeps the earlier behaviour: approval and rejection go out on the earlier templates, the
 request-received SMS on the earlier one, and the others (referrer notice, expiry, extension messages) are not sent.
 
-Phone numbers in SMS are whitelisted call-back numbers on DLT: only active center managers' numbers are sent, so a
-new center manager's number must be whitelisted before they are made a center manager.
+Phone numbers in SMS are whitelisted call-back numbers on DLT. The rejection and extension-refusal SMS give the
+foundation's number (FOUNDATION_CONTACT_MOBILE); only the approval SMS names the pickup center's manager, so a new
+center manager's number must be whitelisted before they are made a center manager.
 Links are the site address only (PUBLIC_SITE_URL): that is the one URL whitelisted on DLT, and an SMS with any other
 link, even a page on the same site, is accepted by BulkSMS but never delivered.
 """
@@ -26,6 +27,8 @@ from app.services.sms import send_template_sms
 DLT_VARIABLE_MAX = 40
 # Who a rejected requester is told to contact on the earlier template (its {contact_info}).
 REJECTION_CONTACT = "Mahesh Foundation team"
+# The number to call in the rejection and extension-refusal SMS (whitelisted on DLT as a call-back number).
+FOUNDATION_CONTACT_MOBILE = "9849001740"
 
 
 def _setting(name: str, default: str) -> bool:
@@ -154,13 +157,12 @@ def notify_request_approved(db: Session, lease: LeaseRequest) -> None:
 
 
 def notify_request_rejected(db: Session, lease: LeaseRequest) -> None:
-    """Gives the pickup center manager's number to call; without one, the earlier SMS names the foundation team."""
-    managers = center_managers(db, lease.preferred_center_id)
-    if template_on("mf_request_rejected") and managers:
+    """Gives the foundation's number to call (the earlier template, when switched back, names the foundation team)."""
+    if template_on("mf_request_rejected"):
         send_template_sms(
             mobile=lease.mobile,
             event_name="mf_request_rejected",
-            variables={"token_number": lease.token_number, "contact_mobile": managers[0].mobile},
+            variables={"token_number": lease.token_number, "contact_mobile": FOUNDATION_CONTACT_MOBILE},
             db=db,
             reference_id=lease.id,
         )
@@ -194,16 +196,15 @@ def notify_extension_received(db: Session, lease: LeaseRequest) -> None:
 
 
 def notify_extension_rejected(db: Session, lease: LeaseRequest) -> None:
-    """Return date stays as it was; the number to call is the pickup center manager's (nothing is sent without one)."""
-    managers = center_managers(db, lease.preferred_center_id)
-    if template_on("mf_extension_not_approved") and managers:
+    """Return date stays as it was; the number to call is the foundation's."""
+    if template_on("mf_extension_not_approved"):
         send_template_sms(
             mobile=lease.mobile,
             event_name="mf_extension_not_approved",
             variables={
                 "token_number": lease.token_number,
                 "due_date": sms_date(lease.due_date),
-                "contact_mobile": managers[0].mobile,
+                "contact_mobile": FOUNDATION_CONTACT_MOBILE,
             },
             db=db,
             reference_id=lease.id,
