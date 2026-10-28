@@ -163,6 +163,32 @@ def reserve_stock(
     return created
 
 
+def release_holds_for_issued(db: Session, lease: LeaseRequest, issued: list[tuple[str, str]]) -> int:
+    """Release one hold per (model, center the device came from) just issued on a request that still has open lines.
+    Such a request stays approved, so without this its holds would stay until the last line is issued, counting each
+    issued device twice: once as leased and once as held. Takes the hold at the device's own center when there is
+    one, else the request's oldest hold for that model. Returns the number released."""
+    now = datetime.now(UTC).replace(tzinfo=None)
+    released = 0
+    for sku_id, center_id in issued:
+        holds = (
+            db.query(SKUBlock)
+            .filter(SKUBlock.lease_request_id == lease.id, SKUBlock.sku_id == sku_id, SKUBlock.status == "blocked")
+            .order_by(SKUBlock.created_at, SKUBlock.id)
+            .all()
+        )
+        if not holds:
+            continue
+        hold = next((h for h in holds if h.center_id == center_id), holds[0])
+        hold.status = "released"
+        hold.release_reason = "approved_collected"
+        hold.release_at = now
+        released += 1
+    if released:
+        db.flush()  # before the caller's bulk updates of the request's remaining holds
+    return released
+
+
 # Devices are handed over only after the person collecting them reads out an OTP sent to the request's
 # mobile (see app.routers.handover). The accepted OTP lets that staff member issue devices once, within this time.
 HANDOVER_VERIFICATION_MINUTES = 30

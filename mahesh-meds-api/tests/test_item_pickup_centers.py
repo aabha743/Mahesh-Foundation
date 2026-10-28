@@ -1,8 +1,10 @@
+import uuid
+
 from fastapi.testclient import TestClient
 from sqlalchemy import text
 
 import lease_test_support as support
-from app.leasing import build_fulfillment_plan
+from app.leasing import build_fulfillment_plan, release_holds_for_issued
 from app.main import app
 from app.models import Center, LeaseItem, LeaseRequest, SKUBlock
 from app.security import create_access_token
@@ -183,6 +185,54 @@ class ItemPickupCenterTests(support.LeaseApiTestCase):
         self.assertEqual(issue.status_code, 200, issue.text)
         lines = {line.sku_id: (line.pickup_center_id, line.asset_id) for line in self.items(lease)}
         self.assertEqual(lines, {self.sku.id: (self.center.id, device.id), self.other_sku.id: (self.other_center.id, None)})
+
+    def blocked(self, lease) -> list[tuple[str, str]]:
+        self.db.rollback()
+        rows = [(h.sku_id, h.center_id) for h in self.holds(lease) if h.status == "blocked"]
+        self.db.rollback()
+        return sorted(rows)
+
+    def issue_partly(self, lease, device, sku):
+        """Issue one device on a two-line request, leaving the other line open (the request stays approved)."""
+        self.confirm_handover(self.center_manager, lease)
+        other = self.other_sku if sku is self.sku else self.sku
+        response = self.patch_as(self.center_manager, lease, {"status": "approved", "items": [
+            {"sku_id": sku.id, "quantity_requested": 1, "asset_id": device.id},
+            {"sku_id": other.id, "quantity_requested": 1},
+        ]})
+        self.assertEqual(response.status_code, 200, response.text)
+
+    def test_a_partly_issued_request_holds_only_its_open_lines(self):
+        self.make_asset(sku=self.other_sku, center=self.other_center)
+        lease = self.lease(self.submit([self.item(self.sku, self.center), self.item(self.other_sku, self.other_center)]))
+        self.patch_as(self.approver, lease, {"status": "approved"})
+        device = self.make_asset()
+        free_before = self.free_at(self.sku, self.center)
+        self.assertEqual(self.blocked(lease), sorted([(self.sku.id, self.center.id), (self.other_sku.id, self.other_center.id)]))
+
+        self.issue_partly(lease, device, self.sku)
+
+        self.assertEqual(self.blocked(lease), [(self.other_sku.id, self.other_center.id)])
+        # The issued device is counted once (leased), not twice (leased and still held).
+        self.assertEqual(self.free_at(self.sku, self.center), free_before)
+        self.reload(lease)
+        self.assertEqual(lease.status, "approved")
+
+    def test_the_hold_released_is_the_one_at_the_devices_center_else_the_oldest(self):
+        # Only staff without a center (admins) can issue from another center, so the choice is checked directly.
+        lease = self.make_lease("approved", [None, None])
+        for center in (self.center, self.other_center):
+            self.db.add(SKUBlock(lease_request_id=lease.id, sku_id=self.sku.id, center_id=center.id, status="blocked"))
+        self.db.commit()
+
+        release_holds_for_issued(self.db, lease, [(self.sku.id, self.other_center.id)])
+        self.db.commit()
+        self.assertEqual(self.blocked(lease), [(self.sku.id, self.center.id)])
+
+        # A device from a center with no hold for it releases the request's remaining (oldest) hold for the model.
+        release_holds_for_issued(self.db, lease, [(self.sku.id, str(uuid.uuid4()))])
+        self.db.commit()
+        self.assertEqual(self.blocked(lease), [])
 
     def test_re_approval_holds_at_each_devices_center(self):
         self.make_asset(sku=self.other_sku, center=self.other_center)
