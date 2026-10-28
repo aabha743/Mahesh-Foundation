@@ -18,6 +18,8 @@ SMS_BASE_URL = os.getenv("SMS_BASE_URL", "http://www.bulksmsapps.com/api/apismsv
 SMS_PEID = os.getenv("SMS_PEID", "")
 SMS_ENABLED = os.getenv("SMS_ENABLED", "true").lower() == "true"
 SMS_TIMEOUT_SECONDS = float(os.getenv("SMS_TIMEOUT_SECONDS", "10"))
+# Delivery report for one MessageId; asked by app/jobs/sms_delivery.py.
+SMS_STATUS_URL = os.getenv("SMS_STATUS_URL", "http://www.bulksmsapps.com/api/apiDeliveryStatusv2.aspx")
 
 SMS_TEMPLATE_SEEDS: list[tuple[str, str, str | None]] = [
     (
@@ -205,6 +207,10 @@ def ensure_sms_tables(db: Session) -> None:
               reference_id CHAR(36) NULL,
               status VARCHAR(20) NOT NULL,
               error_message TEXT NULL,
+              provider_message_id VARCHAR(40) NULL,
+              delivery_status VARCHAR(20) NULL,
+              delivery_detail VARCHAR(255) NULL,
+              delivery_checked_at DATETIME NULL,
               sent_at DATETIME DEFAULT CURRENT_TIMESTAMP
             )
             """
@@ -277,7 +283,9 @@ def log_sms_attempt(
     status: str,
     error_message: str | None,
     db: Session,
+    provider_message_id: str | None = None,
 ) -> None:
+    """provider_message_id is BulkSMS's MessageId of an accepted message; its delivery is then checked later."""
     ensure_sms_tables(db)
     db.execute(
         text(
@@ -289,6 +297,8 @@ def log_sms_attempt(
               reference_id,
               status,
               error_message,
+              provider_message_id,
+              delivery_status,
               sent_at
             ) VALUES (
               :recipient_mobile,
@@ -297,6 +307,8 @@ def log_sms_attempt(
               :reference_id,
               :status,
               :error_message,
+              :provider_message_id,
+              :delivery_status,
               CURRENT_TIMESTAMP
             )
             """
@@ -308,6 +320,8 @@ def log_sms_attempt(
             "reference_id": reference_id,
             "status": status,
             "error_message": error_message,
+            "provider_message_id": provider_message_id,
+            "delivery_status": "pending" if provider_message_id else None,
         },
     )
     db.commit()
@@ -413,6 +427,8 @@ def send_sms(
         return False
 
     if "MessageId-" in response_text:
+        # Accepted is not delivered: app/jobs/sms_delivery.py asks BulkSMS about this MessageId later.
+        message_id = re.search(r"MessageId-(\d+)", response_text)
         log_sms_attempt(
             recipient_mobile=formatted_mobile,
             message=log_text,
@@ -421,6 +437,7 @@ def send_sms(
             status="sent",
             error_message=None,
             db=db,
+            provider_message_id=message_id.group(1) if message_id else None,
         )
         return True
 
@@ -434,6 +451,58 @@ def send_sms(
         db=db,
     )
     return False
+
+
+# Delivery report codes. BulkSMS answers "<mobile>-DELIVRD ;" once the phone has the message and
+# "<mobile>-AWAITED-DLR ;" while the operator has not reported; a message DLT blocks (a link that is not
+# whitelisted, text that does not match the template) stays AWAITED-DLR for good. Any other code is an
+# operator failure such as UNDELIV, EXPIRED or REJECTD.
+DELIVERED_CODES = {"DELIVRD", "DELIVERED"}
+PENDING_CODES = {
+    "AWAITED-DLR", "AWAITED", "PENDING", "SUBMITTED", "SUBMITD", "SENT", "ACCEPTD", "ACCEPTED", "ENROUTE", "BUFFERED",
+}
+
+
+class DeliveryLookupError(Exception):
+    """BulkSMS could not be asked, or refused to answer (e.g. "TRACE:107! Not Valid API KEY")."""
+
+
+def _mask_numbers(value: str) -> str:
+    return re.sub(r"\d{10,}", "<number>", value)
+
+
+def parse_delivery_reply(reply: str) -> tuple[str, str]:
+    """Read a delivery-status reply as (outcome, code): outcome is delivered, failed, pending or unrecognised.
+
+    The code is what BulkSMS reported, e.g. DELIVRD; for an unrecognised reply it is the reply, phone numbers masked.
+    """
+    answer = reply.split("<!DOCTYPE", 1)[0].strip()  # an empty ASP.NET page follows the answer
+    if answer.upper().startswith("TRACE:"):
+        raise DeliveryLookupError(_mask_numbers(answer.splitlines()[0])[:200])
+    match = re.fullmatch(r"\d+-([A-Za-z][A-Za-z0-9_ -]*?)\s*(;.*)?", answer, flags=re.DOTALL)
+    if not match:
+        return "unrecognised", _mask_numbers(" ".join(answer.split()))[:200]
+    code = match.group(1).upper()
+    if code in DELIVERED_CODES:
+        return "delivered", code
+    if code in PENDING_CODES:
+        return "pending", code
+    return "failed", code
+
+
+def fetch_delivery_status(message_id: str) -> tuple[str, str]:
+    """Ask BulkSMS what happened to one accepted message; see parse_delivery_reply."""
+    try:
+        response = httpx.get(
+            SMS_STATUS_URL,
+            params={"apikey": SMS_API_KEY, "messageid": message_id},
+            timeout=SMS_TIMEOUT_SECONDS,
+        )
+    except httpx.HTTPError as exc:
+        raise DeliveryLookupError(f"BulkSMS not reachable ({type(exc).__name__})") from exc
+    if response.status_code != 200:
+        raise DeliveryLookupError(f"BulkSMS answered HTTP {response.status_code}")
+    return parse_delivery_reply(response.text)
 
 
 def get_template(event_name: str, db: Session):

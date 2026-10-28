@@ -12,6 +12,7 @@ from app.database import DATABASE_URL, engine
 
 from app.jobs.aadhar_photos import delete_expired_aadhar_photos
 from app.jobs.reminders import send_due_date_reminders, release_expired_blocks
+from app.jobs.sms_delivery import check_sms_delivery
 
 logger = logging.getLogger(__name__)
 
@@ -95,6 +96,16 @@ def _register_jobs() -> None:
         "interval",
         minutes=30,
         id="release_expired_blocks",
+        replace_existing=True,
+        coalesce=True,
+        max_instances=1,
+    )
+    # Asks BulkSMS whether accepted SMS reached the phone; does nothing while SMS is off.
+    scheduler.add_job(
+        check_sms_delivery,
+        "interval",
+        minutes=10,
+        id="check_sms_delivery",
         replace_existing=True,
         coalesce=True,
         max_instances=1,

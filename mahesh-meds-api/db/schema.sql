@@ -336,11 +336,17 @@ CREATE TABLE notifications_log (
   reference_id CHAR(36) NULL,
   status VARCHAR(20) NOT NULL,
   error_message TEXT,
+  -- Delivery as reported by BulkSMS (migration 008): status above only says whether BulkSMS accepted the message.
+  provider_message_id VARCHAR(40) NULL,
+  delivery_status VARCHAR(20) NULL,
+  delivery_detail VARCHAR(255) NULL,
+  delivery_checked_at DATETIME NULL,
   sent_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   INDEX idx_notif_mobile (recipient_mobile),
   INDEX idx_notif_status (status),
   INDEX idx_notif_reference_type_day (reference_id, type, sent_at),
-  INDEX idx_notif_mobile_type_day (recipient_mobile, type, sent_at)
+  INDEX idx_notif_mobile_type_day (recipient_mobile, type, sent_at),
+  INDEX idx_notif_delivery (delivery_status, sent_at)
 );
 
 -- ============================================

@@ -17,6 +17,7 @@ load_dotenv()
 
 os.environ["SMS_ENABLED"] = "false"
 os.environ["SMS_BASE_URL"] = "http://127.0.0.1:9/sms-disabled-in-tests"
+os.environ["SMS_STATUS_URL"] = "http://127.0.0.1:9/sms-disabled-in-tests"
 # Aadhaar photos go to a throwaway folder, never to a Cloud Storage bucket.
 os.environ.pop("AADHAR_PHOTO_BUCKET", None)
 _photo_dir = tempfile.mkdtemp(prefix="mes-test-photos-")

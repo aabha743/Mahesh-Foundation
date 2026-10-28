@@ -58,7 +58,7 @@ GitHub CLI and gcloud, both signed in).
    ```
 
    Errors since restart, scheduler lock, public pages through nginx, every file on the server against the
-   release checksums, migration status, data counts, SMS sent since the restart, rollback copies.
+   release checksums, migration status, data counts, SMS sent since the restart, SMS delivery over the last 7 days, rollback copies.
 
 6. **Tag the release:**
 
