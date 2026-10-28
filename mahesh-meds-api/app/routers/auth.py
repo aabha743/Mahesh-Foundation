@@ -332,13 +332,8 @@ def refresh_token(
     Validates refresh token, issues new access token, optionally rotates refresh token.
     """
     if not refresh_token:
-        audit_auth_event(
-            db,
-            request,
-            action="refresh_failed",
-            details={"reason": "missing_refresh_cookie"},
-        )
-        db.commit()
+        # Not logged: every visitor who never signed in (patients on the public pages included) gets here when
+        # the app checks for a session; that was over half the activity log. Bad or expired tokens are still logged.
         raise HTTPException(status_code=401, detail="No refresh token provided")
 
     # Find refresh token in DB using prefix for efficient lookup

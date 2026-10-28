@@ -2,7 +2,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import JSON, Boolean, CheckConstraint, Date, DateTime, ForeignKey, String, Text, func
+from sqlalchemy import JSON, Boolean, CheckConstraint, Date, DateTime, ForeignKey, String, Text, event, func
 from sqlalchemy.dialects.mysql import CHAR
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -319,10 +319,23 @@ class AuditLog(Base):
     action: Mapped[str] = mapped_column(String(100), nullable=False)
     entity_type: Mapped[str] = mapped_column(String(50), nullable=False)
     entity_id: Mapped[str | None] = mapped_column(CHAR(36))
+    # The request token the entry is about (from its old/new values), so a request's timeline can be read by index.
+    token: Mapped[str | None] = mapped_column(String(20))
     old_value: Mapped[dict | None] = mapped_column(JSON)
     new_value: Mapped[dict | None] = mapped_column(JSON)
     ip_address: Mapped[str | None] = mapped_column(String(45))
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+
+
+@event.listens_for(AuditLog, "before_insert")
+def _fill_audit_token(_mapper, _connection, entry: AuditLog) -> None:
+    """Every entry whose values name a token gets it in the token column, however the entry was written."""
+    if entry.token is None:
+        for values in (entry.new_value, entry.old_value):
+            token = values.get("token") if isinstance(values, dict) else None
+            if isinstance(token, str) and token:
+                entry.token = token[:20]
+                break
 
 
 class SKUBlock(Base):

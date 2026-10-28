@@ -5,6 +5,7 @@ from decimal import Decimal
 from uuid import UUID
 
 from fastapi import Request
+from sqlalchemy import and_, false, not_, or_
 from sqlalchemy.orm import Session
 
 from app.models import User, AuditLog
@@ -17,13 +18,37 @@ def _section_for_log(entity_type: str, action: str) -> str:
     # even when the entity type is lease_request.
     if action.startswith("approve_") or action.startswith("reject_") or entity_type in {"approval", "approver"}:
         return "approver"
-    if entity_type in {"lease_request", "lease_item", "lease_extension", "token"}:
+    if entity_type in REQUEST_ENTITY_TYPES:
         return "requests"
-    if entity_type in {"asset", "center"}:
+    if entity_type in CENTER_ENTITY_TYPES:
         return "centers"
     if entity_type in {"admin", "user", "sku"}:
         return "admin"
     return "admin"
+
+
+REQUEST_ENTITY_TYPES = ("lease_request", "lease_item", "lease_extension", "token")
+CENTER_ENTITY_TYPES = ("asset", "center")
+REPORT_SECTIONS = ("approver", "requests", "centers", "admin")
+
+
+def section_clause(section: str):
+    """The database condition matching _section_for_log(entity_type, action) == section, so a report section can be
+    filtered before the row limit is applied. An unknown section matches nothing."""
+    approver = or_(
+        AuditLog.action.like("approve\\_%"),
+        AuditLog.action.like("reject\\_%"),
+        AuditLog.entity_type.in_(("approval", "approver")),
+    )
+    if section == "approver":
+        return approver
+    if section == "requests":
+        return and_(not_(approver), AuditLog.entity_type.in_(REQUEST_ENTITY_TYPES))
+    if section == "centers":
+        return and_(not_(approver), AuditLog.entity_type.in_(CENTER_ENTITY_TYPES))
+    if section == "admin":
+        return and_(not_(approver), AuditLog.entity_type.not_in(REQUEST_ENTITY_TYPES + CENTER_ENTITY_TYPES))
+    return false()
 
 
 def _actor_context(

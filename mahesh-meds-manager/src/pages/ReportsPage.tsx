@@ -53,12 +53,14 @@ export default function ReportsPage() {
   const [endDate, setEndDate] = useState("");
   const [loading, setLoading] = useState(false);
 
-  // Fetches audit logs from backend with optional date range.
+  // Fetches the newest 500 entries of the open section (filtered by the server, so other sections can't crowd
+  // them out), with an optional date range.
   const loadLogs = useCallback(async () => {
     setLoading(true);
     try {
       const params = new URLSearchParams();
       params.set("limit", "500");
+      params.set("section", activeSection);
       if (startDate) params.set("start_at", startDate);
       if (endDate) params.set("end_at", endDate);
       const data = await apiFetch<AuditLog[]>(`/api/v1/audit-logs?${params.toString()}`);
@@ -68,7 +70,7 @@ export default function ReportsPage() {
     } finally {
       setLoading(false);
     }
-  }, [startDate, endDate]);
+  }, [activeSection, startDate, endDate]);
 
   useEffect(() => {
     void loadLogs();

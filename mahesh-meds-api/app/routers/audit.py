@@ -9,7 +9,7 @@ from app.database import get_db
 from app.models import Center, User, AuditLog
 from app.schemas import AuditLogOut
 from app.permissions import get_current_user, require_permission
-from app.audit import _section_for_log
+from app.audit import _section_for_log, section_clause
 
 router = APIRouter()
 
@@ -42,8 +42,13 @@ def list_audit_logs(
             query = query.filter(AuditLog.created_at <= end_dt)
         except ValueError:
             raise HTTPException(status_code=400, detail="Invalid end_at format; use ISO date") from None
+    # Section and token are filtered by the database, before the row limit, so older entries are not cut off.
+    if section:
+        query = query.filter(section_clause(section))
+    if token:
+        query = query.filter(AuditLog.token == token.strip())
 
-    logs = query.order_by(AuditLog.created_at.desc()).offset(offset).limit(limit).all()
+    logs = query.order_by(AuditLog.created_at.desc(), AuditLog.id).offset(offset).limit(limit).all()
     user_ids = [log.user_id for log in logs if log.user_id]
     center_ids = [log.center_id for log in logs if log.center_id]
     users = db.query(User).filter(User.id.in_(user_ids)).all() if user_ids else []
@@ -53,11 +58,6 @@ def list_audit_logs(
     rows: list[dict] = []
     for log in logs:
         sec = _section_for_log(log.entity_type, log.action)
-        if section and sec != section:
-            continue
-        token_value = (log.new_value or {}).get("token") or (log.old_value or {}).get("token")
-        if token and token_value != token:
-            continue
         rows.append(
             {
                 **AuditLogOut.model_validate(log).model_dump(),
@@ -86,13 +86,10 @@ def list_center_activity(
     if "master_admin" not in role_names and current_user.center_id != requested_center_id:
         raise HTTPException(status_code=403, detail="Permission denied: center activity scope")
 
-    query = (
-        db.query(AuditLog)
-        .filter(AuditLog.center_id == requested_center_id)
-        .order_by(AuditLog.created_at.desc())
-        .limit(limit)
-    )
-    logs = query.all()
+    query = db.query(AuditLog).filter(AuditLog.center_id == requested_center_id)
+    if section:
+        query = query.filter(section_clause(section))
+    logs = query.order_by(AuditLog.created_at.desc(), AuditLog.id).limit(limit).all()
     user_ids = [log.user_id for log in logs if log.user_id]
     users = db.query(User).filter(User.id.in_(user_ids)).all() if user_ids else []
     user_name_by_id = {u.id: u.name for u in users}
@@ -100,8 +97,6 @@ def list_center_activity(
     rows: list[dict] = []
     for log in logs:
         sec = _section_for_log(log.entity_type, log.action)
-        if section and sec != section:
-            continue
         rows.append(
             {
                 **AuditLogOut.model_validate(log).model_dump(),
