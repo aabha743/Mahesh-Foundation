@@ -4,8 +4,8 @@ import logging
 import uuid
 from datetime import date, datetime, UTC, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException, Request
-from sqlalchemy import func, select, text
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from sqlalchemy import func, or_, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -34,6 +34,7 @@ from app.services.sms import send_template_sms
 from app.security import get_track_mobile, validate_csrf
 from app.permissions import (
     active_users_with_permission,
+    can_review_aadhar,
     enforce_center_resource_access,
     ensure_can_view_request,
     get_optional_user,
@@ -56,6 +57,7 @@ from app.leasing import (
     lease_devices,
     lease_status_to_api,
     lease_status_to_db,
+    mask_aadhar,
     next_token_number,
     normalize_public_tracking_mobile,
     available_at,
@@ -253,23 +255,62 @@ def get_issue_context(
     }
 
 
-@router.get("/api/v1/lease-requests", response_model=list[LeaseRequestListOut])
-def list_lease_requests(
-    request: Request,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(require_requests_visibility),
-):
-    """Lists lease requests with denormalized sku/item arrays for frontend tables."""
-    query = db.query(LeaseRequest)
-    # Center-specific relevance is now derived from actual asset location/home-center data.
-    # if is_center_scoped_operator(current_user, db):
-    #     query = query.filter(LeaseRequest.preferred_center_id == current_user.center_id)
-    requests = query.order_by(LeaseRequest.created_at.desc()).all()
-    write_audit_log(db, request, action="requests_list_viewed", entity_type="lease_request", current_user=current_user)
-    db.commit()
+# The statuses the request list can be filtered by, as the API names them, and the database statuses each covers.
+LIST_STATUSES: dict[str, tuple[str, ...]] = {
+    "pending": ("pending",),
+    "approved": ("approved",),
+    "rejected": ("rejected",),
+    "expired": ("expired",),
+    "active": ("issued", "partially_returned"),
+    "closed": ("returned",),
+}
+ACTIVE_DB_STATUSES = LIST_STATUSES["active"]
+MAX_LIST_PAGE = 200
+
+
+def _db_statuses(status: str | None) -> list[str] | None:
+    """'approved,active' -> the database statuses they cover; None when the list is not filtered by status."""
+    if not status:
+        return None
+    names = [name.strip().lower() for name in status.split(",") if name.strip()]
+    unknown = [name for name in names if name not in LIST_STATUSES]
+    if unknown:
+        raise HTTPException(status_code=400, detail=f"Unknown status: {', '.join(unknown)}")
+    return [db_status for name in names for db_status in LIST_STATUSES[name]]
+
+
+def _list_center(db: Session, current_user: User, center_id: str | None) -> str | None:
+    """The center a list is narrowed to: always a center manager's own center; otherwise the one asked for, if any."""
+    if is_center_scoped_operator(current_user, db):
+        if center_id and center_id != current_user.center_id:
+            raise HTTPException(status_code=403, detail="You can only see your own center's requests")
+        return current_user.center_id
+    if center_id and not db.get(Center, center_id):
+        raise HTTPException(status_code=400, detail="Invalid center_id")
+    return center_id
+
+
+def _requests_for_center(db: Session, center_id: str):
+    """Requests a center works on, as the center screens have always picked them: open requests whose pickup plan
+    includes the center, and requests with a device (out now or returned) whose home or current center it is."""
+    open_requests = db.query(LeaseRequest).filter(LeaseRequest.status.in_(("pending", "approved"))).all()
+    picked_up_here = [
+        lease.id for lease in open_requests
+        if any(center["center_id"] == center_id for center in fulfillment_plan_for(db, lease)[0])
+    ]
+    device_from_here = (
+        select(LeaseItem.lease_request_id)
+        .join(Asset, Asset.id == LeaseItem.asset_id)
+        .where(func.coalesce(Asset.home_center_id, Asset.center_id) == center_id)
+    )
+    return or_(LeaseRequest.id.in_(picked_up_here), LeaseRequest.id.in_(device_from_here))
+
+
+def _list_rows(db: Session, requests: list[LeaseRequest], full_aadhar: bool) -> list[dict]:
+    """Requests with their lines, model names and pickup plan, as the staff screens show them. Aadhaar numbers are
+    masked to the last four digits for staff who do not review requests (see app.permissions.can_review_aadhar)."""
     if not requests:
         return []
-
     request_ids = [r.id for r in requests]
     sku_rows = db.execute(
         select(
@@ -307,17 +348,119 @@ def list_lease_requests(
     response_rows = []
     for req in requests:
         fulfillment_centers, fulfillment_message = fulfillment_plan_for(db, req)
-        response_rows.append(
-            {
-                **LeaseRequestOut.model_validate(req).model_dump(),
-                "status": lease_status_to_api(req.status),
-                "skus": sku_map.get(req.id, []),
-                "items": item_map.get(req.id, []),
-                "fulfillment_centers": fulfillment_centers,
-                "fulfillment_message": fulfillment_message,
-            }
-        )
+        row = {
+            **LeaseRequestOut.model_validate(req).model_dump(),
+            "status": lease_status_to_api(req.status),
+            "skus": sku_map.get(req.id, []),
+            "items": item_map.get(req.id, []),
+            "fulfillment_centers": fulfillment_centers,
+            "fulfillment_message": fulfillment_message,
+        }
+        if not full_aadhar:
+            row["aadhar_number"] = mask_aadhar(row["aadhar_number"])
+            row["patient_aadhar_number"] = mask_aadhar(row["patient_aadhar_number"])
+        response_rows.append(row)
     return response_rows
+
+
+@router.get("/api/v1/lease-requests", response_model=list[LeaseRequestListOut])
+def list_lease_requests(
+    status: str | None = Query(default=None, description="Comma-separated: pending, approved, rejected, expired, active, closed"),
+    center_id: str | None = Query(default=None, description="Only requests this center works on"),
+    limit: int = Query(default=50, ge=1, le=MAX_LIST_PAGE),
+    offset: int = Query(default=0, ge=0),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_requests_visibility),
+):
+    """One page of requests, newest first. Center managers only ever get their own center's requests.
+    Not written to the activity log: the staff screens open it all the time."""
+    query = db.query(LeaseRequest)
+    statuses = _db_statuses(status)
+    if statuses is not None:
+        query = query.filter(LeaseRequest.status.in_(statuses))
+    center = _list_center(db, current_user, center_id)
+    if center:
+        query = query.filter(_requests_for_center(db, center))
+    requests = query.order_by(LeaseRequest.created_at.desc(), LeaseRequest.id).offset(offset).limit(limit).all()
+    return _list_rows(db, requests, full_aadhar=can_review_aadhar(current_user, db))
+
+
+@router.get("/api/v1/lease-requests/counts")
+def count_lease_requests(
+    center_id: str | None = Query(default=None, description="Only requests this center works on"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_requests_visibility),
+) -> dict:
+    """The number of requests in each status (the screens' tab counts), and the number of active requests with a
+    device at each center (home or current center). Center managers get their own center's numbers only."""
+    center = _list_center(db, current_user, center_id)
+    query = db.query(LeaseRequest.status, func.count(LeaseRequest.id))
+    if center:
+        query = query.filter(_requests_for_center(db, center))
+    by_db_status = dict(query.group_by(LeaseRequest.status).all())
+    device_center = func.coalesce(Asset.home_center_id, Asset.center_id)
+    active_query = (
+        db.query(device_center, func.count(func.distinct(LeaseItem.lease_request_id)))
+        .select_from(LeaseItem)
+        .join(Asset, Asset.id == LeaseItem.asset_id)
+        .join(LeaseRequest, LeaseRequest.id == LeaseItem.lease_request_id)
+        .filter(LeaseRequest.status.in_(ACTIVE_DB_STATUSES))
+    )
+    if center:
+        active_query = active_query.filter(device_center == center)
+    return {
+        "total": sum(by_db_status.values()),
+        "by_status": {
+            name: sum(by_db_status.get(db_status, 0) for db_status in db_statuses)
+            for name, db_statuses in LIST_STATUSES.items()
+        },
+        "active_by_center": dict(active_query.group_by(device_center).all()),
+    }
+
+
+@router.get("/api/v1/lease-requests/open-items")
+def list_open_items(
+    center_id: str | None = Query(default=None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_requests_visibility),
+) -> list[dict]:
+    """Devices out on loan now (issued and not returned) whose home or current center is the center, with the
+    request they are on: for the center's inventory screen."""
+    center = _list_center(db, current_user, center_id)
+    if not center:
+        raise HTTPException(status_code=400, detail="center_id is required")
+    rows = db.execute(
+        select(
+            LeaseItem.asset_id,
+            LeaseItem.due_date,
+            LeaseRequest.id.label("lease_request_id"),
+            LeaseRequest.token_number,
+            LeaseRequest.requestor_name,
+            LeaseRequest.mobile,
+        )
+        .join(LeaseRequest, LeaseRequest.id == LeaseItem.lease_request_id)
+        .join(Asset, Asset.id == LeaseItem.asset_id)
+        .where(LeaseItem.returned_at.is_(None), func.coalesce(Asset.home_center_id, Asset.center_id) == center)
+        .order_by(LeaseItem.due_date)
+    ).all()
+    return [dict(row._mapping) for row in rows]
+
+
+@router.get("/api/v1/lease-requests/{lease_id}", response_model=LeaseRequestListOut)
+def get_lease_request(
+    lease_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_requests_visibility),
+):
+    """One request as the list shows it (the approval screen). Center managers only get their own center's."""
+    lease = db.get(LeaseRequest, lease_id)
+    center = _list_center(db, current_user, None) if lease else None
+    if center and not db.query(LeaseRequest.id).filter(LeaseRequest.id == lease_id, _requests_for_center(db, center)).first():
+        lease = None
+    if not lease:
+        raise HTTPException(status_code=404, detail="Lease request not found")
+    [row] = _list_rows(db, [lease], full_aadhar=can_review_aadhar(current_user, db))
+    return row
 
 
 @router.post("/api/v1/lease-requests", response_model=LeaseRequestOut)

@@ -9,7 +9,7 @@ import { Switch } from "@/components/ui/switch";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
-import { apiFetch } from "@/lib/api";
+import { apiFetch, fetchLeaseRequestCounts } from "@/lib/api";
 import { useAuth } from "@/hooks/useAuth";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -106,7 +106,7 @@ export default function CentersPage() {
     // Loads centers with related inventory/request counts for admin overview cards.
     async function loadCenters() {
       try {
-        const [centersResp, assetsResp, skusResp, leaseResp] = await Promise.all([
+        const [centersResp, assetsResp, skusResp, leaseCounts] = await Promise.all([
           apiFetch<Array<{
             id: string;
             name: string;
@@ -120,7 +120,7 @@ export default function CentersPage() {
           }>>("/api/v1/centers"),
           apiFetch<Array<AssetApi>>("/api/v1/assets"),
           apiFetch<Array<SkuApi>>("/api/v1/skus"),
-          apiFetch<Array<{ status: string; items?: Array<{ asset_id: string | null }> }>>("/api/v1/lease-requests"),
+          fetchLeaseRequestCounts(),
         ]);
 
         const assetsByCenter: Record<string, number> = {};
@@ -129,21 +129,8 @@ export default function CentersPage() {
           assetsByCenter[asset.center_id] = (assetsByCenter[asset.center_id] ?? 0) + 1;
         });
 
-        const activeLeasesByCenter: Record<string, number> = {};
-        const assetsById = Object.fromEntries(assetsResp.map((asset) => [asset.id, asset]));
-        leaseResp.forEach((lease) => {
-          if (lease.status !== "active") return;
-          const touchedCenters = new Set<string>();
-          for (const item of lease.items ?? []) {
-            if (!item.asset_id) continue;
-            const asset = assetsById[item.asset_id];
-            const leaseCenterId = asset?.home_center_id ?? asset?.center_id;
-            if (leaseCenterId) touchedCenters.add(leaseCenterId);
-          }
-          touchedCenters.forEach((centerId) => {
-            activeLeasesByCenter[centerId] = (activeLeasesByCenter[centerId] ?? 0) + 1;
-          });
-        });
+        // Active requests with a device whose home (or current) center is the center; counted on the server.
+        const activeLeasesByCenter = leaseCounts.active_by_center;
 
         const uiCenters: Center[] = centersResp.map((center) => ({
           id: center.id,

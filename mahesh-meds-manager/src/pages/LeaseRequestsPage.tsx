@@ -12,23 +12,77 @@ import { awaitsDecision, formatFulfillmentCenterLabel, leaseStatusColors } from 
 import { type LeaseRequestView as LeaseRequest, type LeaseStatus } from "@/lib/uiTypes";
 import { formatLeaseStatus } from "@/lib/utils";
 import { toast } from "sonner";
-import { apiFetch } from "@/lib/api";
+import { apiFetch, type LeaseRequestStatus } from "@/lib/api";
 import { useAuth } from "@/hooks/useAuth";
+import { useLeaseRequestCounts, useLeaseRequestPages } from "@/hooks/useLeaseRequestPages";
+import { ShowMoreButton } from "@/components/ShowMoreButton";
 
 const tabs = ["All", "Pending", "Approved", "Expired", "Active", "Closed"] as const;
+type Tab = (typeof tabs)[number];
+
+type LeaseRequestApi = {
+  id: string;
+  token_number: string;
+  requestor_name: string;
+  patient_name?: string | null;
+  mobile: string;
+  preferred_center_id: string | null;
+  fulfillment_centers?: Array<{ center_id: string; center_name: string }>;
+  status: string;
+  created_at: string;
+  skus: string[];
+};
+
+/** The status a tab lists; All lists every status. */
+function tabStatus(tab: Tab): LeaseRequestStatus | undefined {
+  return tab === "All" ? undefined : (tab.toLowerCase() as LeaseRequestStatus);
+}
+
+function toLeaseRequestView(req: LeaseRequestApi, centerMap: Record<string, string>): LeaseRequest {
+  return {
+    id: req.id,
+    token: req.token_number,
+    requestorName: req.requestor_name,
+    patientName: req.patient_name,
+    mobile: req.mobile,
+    skus: req.skus ?? [],
+    preferredCenter:
+      (req.fulfillment_centers ?? []).length > 0
+        ? formatFulfillmentCenterLabel(req.fulfillment_centers)
+        : req.preferred_center_id
+          ? centerMap[req.preferred_center_id] ?? "Unknown Center"
+          : "Awaiting stock mapping",
+    status: formatLeaseStatus(req.status) as LeaseStatus,
+    submittedDate: req.created_at.slice(0, 10),
+  };
+}
 
 export default function LeaseRequestsPage() {
   const { activeRole, can, hasRole } = useAuth();
-  const [activeTab, setActiveTab] = useState("All");
+  const [activeTab, setActiveTab] = useState<Tab>("All");
   const [viewRequest, setViewRequest] = useState<LeaseRequest | null>(null);
-  const [leaseRequests, setLeaseRequests] = useState<LeaseRequest[]>([]);
+  const [centerMap, setCenterMap] = useState<Record<string, string>>({});
   const [submittingAction, setSubmittingAction] = useState(false);
   const [rejectRequest, setRejectRequest] = useState<LeaseRequest | null>(null);
 
+  // Each tab asks the server for its own status, a page at a time.
+  const {
+    rows,
+    hasMore,
+    loading,
+    loadingMore,
+    loadMore,
+    reload: reloadLeaseRequests,
+  } = useLeaseRequestPages<LeaseRequestApi>({ status: tabStatus(activeTab) }, "Could not load lease requests from API");
+  const { counts, reload: reloadCounts } = useLeaseRequestCounts();
 
-  const filtered = useMemo(() => {
-    return activeTab === "All" ? leaseRequests : leaseRequests.filter((r) => r.status === activeTab);
-  }, [activeTab, leaseRequests]);
+  const leaseRequests = useMemo(() => rows.map((row) => toLeaseRequestView(row, centerMap)), [rows, centerMap]);
+
+  const tabCount = (tab: Tab) => {
+    if (!counts) return 0;
+    const status = tabStatus(tab);
+    return status ? counts.by_status[status] ?? 0 : counts.total;
+  };
 
   const canUseAdminFallback =
     hasRole("master_admin") &&
@@ -36,69 +90,31 @@ export default function LeaseRequestsPage() {
     can("requests.approve") &&
     can("requests.reject");
 
-  const reloadLeaseRequests = useCallback(async () => {
-    const [centers, requests] = await Promise.all([
-      apiFetch<Array<{ id: string; name: string }>>("/api/v1/centers"),
-      apiFetch<
-        Array<{
-          id: string;
-          token_number: string;
-          requestor_name: string;
-          patient_name?: string | null;
-          mobile: string;
-          preferred_center_id: string | null;
-          fulfillment_centers?: Array<{ center_id: string; center_name: string }>;
-          status: string;
-          created_at: string;
-          skus: string[];
-        }>
-      >("/api/v1/lease-requests"),
-    ]);
-
-    const centerMap = Object.fromEntries(centers.map((c) => [c.id, c.name]));
-    const mapped: LeaseRequest[] = requests.map((req) => ({
-      id: req.id,
-      token: req.token_number,
-      requestorName: req.requestor_name,
-      patientName: req.patient_name,
-      mobile: req.mobile,
-      skus: req.skus ?? [],
-      preferredCenter:
-        (req.fulfillment_centers ?? []).length > 0
-          ? formatFulfillmentCenterLabel(req.fulfillment_centers)
-          : req.preferred_center_id
-            ? centerMap[req.preferred_center_id] ?? "Unknown Center"
-            : "Awaiting stock mapping",
-      status: formatLeaseStatus(req.status) as LeaseStatus,
-      submittedDate: req.created_at.slice(0, 10),
-    }));
-
-    setLeaseRequests(mapped);
-    return mapped;
-  }, []);
-
   useEffect(() => {
-    async function loadLeaseRequests() {
+    // Center names for requests that have no pickup plan yet.
+    async function loadCenters() {
       try {
-        await reloadLeaseRequests();
+        const centers = await apiFetch<Array<{ id: string; name: string }>>("/api/v1/centers");
+        setCenterMap(Object.fromEntries(centers.map((c) => [c.id, c.name])));
       } catch {
-        toast.error("Could not load lease requests from API");
+        toast.error("Could not load centers from API");
       }
     }
 
-    loadLeaseRequests();
-  }, [reloadLeaseRequests]);
+    loadCenters();
+  }, []);
 
   const refreshAfterMutation = useCallback(
     async (request: LeaseRequest) => {
-      const latest = await reloadLeaseRequests();
-      const updated = latest.find((item) => item.id === request.id) ?? null;
+      const [latest] = await Promise.all([
+        apiFetch<LeaseRequestApi>(`/api/v1/lease-requests/${request.id}`),
+        reloadLeaseRequests(),
+        reloadCounts(),
+      ]);
       // A new object for the open request makes the token dialog reload its activity.
-      if (updated) {
-        setViewRequest(updated);
-      }
+      setViewRequest(toLeaseRequestView(latest, centerMap));
     },
-    [reloadLeaseRequests],
+    [reloadLeaseRequests, reloadCounts, centerMap],
   );
 
   const handleApprove = useCallback(
@@ -143,14 +159,12 @@ export default function LeaseRequestsPage() {
 
   return (
     <div className="space-y-4">
-      <Tabs value={activeTab} onValueChange={setActiveTab}>
+      <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as Tab)}>
         <TabsList className="flex-wrap">
           {tabs.map((tab) => (
             <TabsTrigger key={tab} value={tab}>
               {tab}
-              <span className="ml-1.5 text-xs opacity-60">
-                ({tab === "All" ? leaseRequests.length : leaseRequests.filter((r) => r.status === tab).length})
-              </span>
+              <span className="ml-1.5 text-xs opacity-60">({tabCount(tab)})</span>
             </TabsTrigger>
           ))}
         </TabsList>
@@ -173,7 +187,7 @@ export default function LeaseRequestsPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {filtered.map((req) => (
+              {leaseRequests.map((req) => (
                 <TableRow key={req.id}>
                   <TableCell>
                     <button className="font-mono text-sm text-primary hover:underline" onClick={() => setViewRequest(req)}>
@@ -234,15 +248,19 @@ export default function LeaseRequestsPage() {
                   </TableCell>
                 </TableRow>
               ))}
-              {filtered.length === 0 && (
-                <TableRow><TableCell colSpan={8} className="text-center py-8 text-muted-foreground">No requests found</TableCell></TableRow>
+              {leaseRequests.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={8} className="text-center py-8 text-muted-foreground">
+                    {loading ? "Loading requests..." : "No requests found"}
+                  </TableCell>
+                </TableRow>
               )}
             </TableBody>
           </Table>
           </div>
 
           <div className="md:hidden space-y-3 p-4">
-            {filtered.map((req) => (
+            {leaseRequests.map((req) => (
               <div key={req.id} className="rounded-lg border bg-card p-4 space-y-3">
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
@@ -293,10 +311,12 @@ export default function LeaseRequestsPage() {
                 </div>
               </div>
             ))}
-            {filtered.length === 0 && (
-              <div className="text-center py-8 text-muted-foreground">No requests found</div>
+            {leaseRequests.length === 0 && (
+              <div className="text-center py-8 text-muted-foreground">{loading ? "Loading requests..." : "No requests found"}</div>
             )}
           </div>
+
+          <ShowMoreButton hasMore={hasMore} loading={loadingMore} onClick={() => void loadMore()} className="px-4 pb-4 md:pt-4" />
         </CardContent>
       </Card>
 

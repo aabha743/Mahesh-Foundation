@@ -456,6 +456,68 @@ export async function reviewLeaseExtension(
   });
 }
 
+// --- Staff lease request lists (filtered and paged on the server) ---
+
+/** Lease request statuses as the API spells them. */
+export type LeaseRequestStatus = "pending" | "approved" | "rejected" | "expired" | "active" | "closed";
+
+/** Rows per page on the staff lease request lists; "Show more" loads the next page. */
+export const LEASE_PAGE_SIZE = 50;
+
+export interface LeaseRequestListQuery {
+  /** One status or several; none means every status. */
+  status?: LeaseRequestStatus | readonly LeaseRequestStatus[];
+  /** Only the requests this center works on (center managers always get their own center). */
+  centerId?: string | null;
+  /** 1..200; the server's default is 50. */
+  limit?: number;
+  offset?: number;
+}
+
+/** URL of one page of staff lease requests, newest first. */
+export function leaseRequestsUrl({ status, centerId, limit, offset }: LeaseRequestListQuery = {}): string {
+  const statuses: readonly LeaseRequestStatus[] = status === undefined ? [] : typeof status === "string" ? [status] : status;
+  const params: string[] = [];
+  if (statuses.length > 0) params.push(`status=${statuses.map(encodeURIComponent).join(",")}`);
+  if (centerId) params.push(`center_id=${encodeURIComponent(centerId)}`);
+  if (limit !== undefined) params.push(`limit=${limit}`);
+  if (offset) params.push(`offset=${offset}`);
+  return params.length > 0 ? `/api/v1/lease-requests?${params.join("&")}` : "/api/v1/lease-requests";
+}
+
+/** Tab counts for the staff lease request lists. */
+export interface LeaseRequestCounts {
+  total: number;
+  by_status: Record<LeaseRequestStatus, number>;
+  /** Active requests with a device whose home (or current) center is the center, by center id. */
+  active_by_center: Record<string, number>;
+}
+
+export function leaseRequestCountsUrl(centerId?: string | null): string {
+  return centerId
+    ? `/api/v1/lease-requests/counts?center_id=${encodeURIComponent(centerId)}`
+    : "/api/v1/lease-requests/counts";
+}
+
+export async function fetchLeaseRequestCounts(centerId?: string | null): Promise<LeaseRequestCounts> {
+  return apiFetch(leaseRequestCountsUrl(centerId));
+}
+
+/** A device out on loan now (issued, not returned) and the request it is on. */
+export interface LeaseOpenItem {
+  asset_id: string;
+  due_date: string | null;
+  lease_request_id: string;
+  token_number: string;
+  requestor_name: string;
+  mobile: string;
+}
+
+/** Devices out on loan whose home or current center is the center: for the center's inventory screen. */
+export async function listLeaseOpenItems(centerId: string): Promise<LeaseOpenItem[]> {
+  return apiFetch(`/api/v1/lease-requests/open-items?center_id=${encodeURIComponent(centerId)}`);
+}
+
 export async function listCenterActivity(limit = 10, section?: string): Promise<CenterActivityLog[]> {
   const params = new URLSearchParams({ limit: String(limit) });
   if (section) params.set("section", section);
