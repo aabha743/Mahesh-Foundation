@@ -33,6 +33,7 @@ as_app -m app.migrate status 2>&1 | grep -v Warning
 echo "requests: $(mariadb -N mahesh_meds -e "SELECT CONCAT(status, '=', COUNT(*)) FROM lease_requests GROUP BY status;" | tr '\n' ' ')"
 echo "devices out on open lines: $(mariadb -N mahesh_meds -e "SELECT COUNT(*) FROM lease_items WHERE asset_id IS NOT NULL AND returned_at IS NULL;")"
 echo "SMS since restart: $(mariadb -N mahesh_meds -e "SELECT CONCAT(status, '=', COUNT(*)) FROM notifications_log WHERE sent_at >= '$(date -u -d "$since" '+%F %T')' GROUP BY status;" | tr '\n' ' ')(end)"
+echo "SMS delivery, last 7 days (app/jobs/sms_delivery.py): $(mariadb -N mahesh_meds -e "SELECT CONCAT(delivery_status, '=', COUNT(*)) FROM notifications_log WHERE delivery_status IS NOT NULL AND sent_at >= NOW() - INTERVAL 7 DAY GROUP BY delivery_status;" | tr '\n' ' ')(end)"
 as_app -c "from app.jobs.reminders import release_expired_blocks; release_expired_blocks(); print('expiry job ran without error')" 2>&1 | grep -vE 'apscheduler|Warning'
 
 step "rollback copies"

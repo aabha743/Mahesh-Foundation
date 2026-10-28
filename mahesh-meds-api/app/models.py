@@ -128,6 +128,11 @@ class NotificationLog(Base):
     reference_id: Mapped[str | None] = mapped_column(CHAR(36))
     status: Mapped[str] = mapped_column(String(20), nullable=False)
     error_message: Mapped[str | None] = mapped_column(Text)
+    # status says whether BulkSMS accepted the message; these say whether it reached the phone (app/jobs/sms_delivery.py).
+    provider_message_id: Mapped[str | None] = mapped_column(String(40))
+    delivery_status: Mapped[str | None] = mapped_column(String(20))
+    delivery_detail: Mapped[str | None] = mapped_column(String(255))
+    delivery_checked_at: Mapped[datetime | None] = mapped_column(DateTime)
     sent_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
 
 

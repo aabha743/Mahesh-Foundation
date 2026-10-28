@@ -40,6 +40,7 @@ Relevant variables:
 - `SMS_USERNAME`
 - `SMS_SENDER`
 - `SMS_BASE_URL`
+- `SMS_STATUS_URL` (delivery reports; defaults to BulkSMS's `apiDeliveryStatusv2.aspx`)
 - `SMS_TIMEOUT_SECONDS`
 
 Behavior:
@@ -52,6 +53,10 @@ Behavior:
   - the backend uses the BulkSMS Apps v2 `apismsv2.aspx` GET format
   - each message event reads its DLT `template_id` from the `sms_templates` table
   - OTP login still returns `debug_otp` when `DEBUG=true`
+  - `status=sent` only means BulkSMS accepted the message. Its MessageId is kept, and every 10 minutes a job asks
+    BulkSMS whether it reached the phone (`app/jobs/sms_delivery.py`): `delivery_status` becomes `delivered`,
+    `failed` (with the operator's code in `delivery_detail`, e.g. `UNDELIV`) or, after 48 hours without a final
+    report, `no_report`. A message DLT blocks stays `AWAITED-DLR` at BulkSMS and so ends as `no_report`.
 
 Before enabling live sending:
 
