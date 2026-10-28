@@ -336,7 +336,7 @@ CREATE TABLE notifications_log (
   reference_id CHAR(36) NULL,
   status VARCHAR(20) NOT NULL,
   error_message TEXT,
-  -- Delivery as reported by BulkSMS (migration 007): status above only says whether BulkSMS accepted the message.
+  -- Delivery as reported by BulkSMS (migration 008): status above only says whether BulkSMS accepted the message.
   provider_message_id VARCHAR(40) NULL,
   delivery_status VARCHAR(20) NULL,
   delivery_detail VARCHAR(255) NULL,
