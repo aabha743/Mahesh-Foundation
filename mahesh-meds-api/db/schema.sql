@@ -365,6 +365,7 @@ CREATE TABLE audit_log (
   action VARCHAR(100) NOT NULL,
   entity_type VARCHAR(50) NOT NULL,
   entity_id CHAR(36),
+  token VARCHAR(20) NULL,
   old_value JSON,
   new_value JSON,
   ip_address VARCHAR(45),
@@ -374,6 +375,7 @@ CREATE TABLE audit_log (
   INDEX idx_audit_user (user_id),
   INDEX idx_audit_center (center_id),
   INDEX idx_audit_entity (entity_type, entity_id),
+  INDEX idx_audit_token (token, created_at),
   INDEX idx_audit_created (created_at)
 );
 
