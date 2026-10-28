@@ -122,6 +122,15 @@ def get_effective_permissions(current_user: User, db: Session) -> set[str]:
     return permissions
 
 
+# Staff who review requests (approve or reject) see Aadhaar numbers in full and the Aadhaar card photos; everyone
+# else who can see requests gets the numbers masked to the last four digits.
+AADHAR_REVIEW_PERMISSIONS = ("requests.approve", "requests.reject")
+
+
+def can_review_aadhar(current_user: User, db: Session) -> bool:
+    return bool(get_effective_permissions(current_user, db) & set(AADHAR_REVIEW_PERMISSIONS))
+
+
 def require_permission(action: str) -> Callable:
     """
     Dependency factory: Creates a dependency that checks if user has the required permission.

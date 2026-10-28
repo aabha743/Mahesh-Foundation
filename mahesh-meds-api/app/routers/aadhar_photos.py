@@ -9,14 +9,13 @@ from sqlalchemy.orm import Session
 from app.audit import write_audit_log
 from app.database import get_db
 from app.models import LeaseRequest, User
+from app.permissions import AADHAR_REVIEW_PERMISSIONS as PHOTO_REVIEW_PERMISSIONS
 from app.permissions import require_any_permission
 from app.photo_storage import PhotoNotFound, PhotoStorageError, load_photo
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
-
-PHOTO_REVIEW_PERMISSIONS = ("requests.approve", "requests.reject")
 
 
 @router.get("/api/v1/lease-requests/{lease_id}/aadhar-photo/{whose}")

@@ -5,7 +5,14 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { useNavigate } from "react-router-dom";
 import { useCenterScope } from "@/hooks/useCenterScope";
-import { apiFetch, listCenterActivity, type CenterActivityLog } from "@/lib/api";
+import {
+  apiFetch,
+  fetchLeaseRequestCounts,
+  leaseRequestsUrl,
+  listCenterActivity,
+  type CenterActivityLog,
+  type LeaseRequestCounts,
+} from "@/lib/api";
 import { toast } from "sonner";
 import { useAuth } from "@/hooks/useAuth";
 import { type AssetForLocalStock } from "@/lib/leaseLocalAvailability";
@@ -66,32 +73,13 @@ function formatActivityAction(action: string) {
     .join(" ");
 }
 
-function isLeaseRelevantToCenter(
-  request: LeaseRequestApi,
-  centerId: string,
-  assets: AssetApi[],
-): boolean {
-  if ((request.fulfillment_centers ?? []).some((center) => center.center_id === centerId)) {
-    return true;
-  }
-
-  const assetsById = Object.fromEntries(assets.map((asset) => [asset.id, asset]));
-
-  return (request.items ?? []).some((item) => {
-    if (item.asset_id) {
-      const asset = assetsById[item.asset_id];
-      const leaseCenterId = asset?.home_center_id ?? asset?.center_id;
-      return leaseCenterId === centerId;
-    }
-    return false;
-  });
-}
-
 export default function CenterDashboard() {
   const navigate = useNavigate();
   const { centerId, loading: centerLoading } = useCenterScope();
   const [assets, setAssets] = useState<AssetApi[]>([]);
-  const [leaseRequests, setLeaseRequests] = useState<LeaseRequestApi[]>([]);
+  // This center's approved requests (few: they expire after 3 days) and its request counts.
+  const [approvedRequests, setApprovedRequests] = useState<LeaseRequestApi[]>([]);
+  const [leaseCounts, setLeaseCounts] = useState<LeaseRequestCounts | null>(null);
   const [users, setUsers] = useState<UserApi[]>([]);
   const [recentActivity, setRecentActivity] = useState<CenterActivityLog[]>([]);
   const [recentActivityLoading, setRecentActivityLoading] = useState(true);
@@ -104,15 +92,18 @@ export default function CenterDashboard() {
 
     async function load() {
       try {
-        const [assetList, leaseList, userList] = await Promise.all([
+        // The server keeps to the requests this center works on.
+        const [assetList, approvedList, counts, userList] = await Promise.all([
           apiFetch<AssetApi[]>("/api/v1/assets"),
-          apiFetch<LeaseRequestApi[]>("/api/v1/lease-requests"),
+          apiFetch<LeaseRequestApi[]>(leaseRequestsUrl({ centerId, status: "approved", limit: 200 })),
+          fetchLeaseRequestCounts(centerId),
           can("users.manage") ? apiFetch<UserApi[]>("/api/v1/users") : Promise.resolve([] as UserApi[]),
         ]);
         if (cancelled) return;
 
         setAssets(assetList.filter((asset) => asset.center_id === centerId));
-        setLeaseRequests(leaseList.filter((request) => isLeaseRelevantToCenter(request, centerId, assetList)));
+        setApprovedRequests(approvedList);
+        setLeaseCounts(counts);
         setUsers(userList);
         setLoadError(false);
       } catch {
@@ -159,26 +150,19 @@ export default function CenterDashboard() {
     };
   }, [centerId]);
 
-  const approvedAwaitingIssue = useMemo(
-    () => leaseRequests.filter((request) => request.status === "approved").slice(0, 5),
-    [leaseRequests],
-  );
-
-  const activeLeaseCount = useMemo(
-    () => leaseRequests.filter((request) => request.status === "active").length,
-    [leaseRequests],
-  );
+  const approvedCount = leaseCounts?.by_status.approved ?? 0;
+  const activeLeaseCount = leaseCounts?.by_status.active ?? 0;
+  const latestApprovedToken = approvedRequests[0]?.token_number;
 
   const localStockShortageCount = useMemo(
     () =>
-      leaseRequests.filter((request) => {
-        if (request.status !== "approved") return false;
-        return (request.items ?? []).every((item) => {
+      approvedRequests.filter((request) =>
+        (request.items ?? []).every((item) => {
           if (item.asset_id) return false;
           return !assets.some((asset) => asset.sku_id === item.sku_id && asset.status === "available");
-        });
-      }).length,
-    [leaseRequests, assets],
+        }),
+      ).length,
+    [approvedRequests, assets],
   );
 
   const isCenterManager = hasRole("center_manager");
@@ -256,7 +240,7 @@ export default function CenterDashboard() {
         <CardContent className="p-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <p className="text-sm font-medium text-foreground">
-              Approved requests waiting on this center: {approvedAwaitingIssue.length}
+              Approved requests waiting on this center: {approvedCount}
             </p>
             <p className="text-xs text-muted-foreground">
               Active leases tied to this center: {activeLeaseCount}
@@ -351,16 +335,16 @@ export default function CenterDashboard() {
                 </div>
               </div>
             ))}
-            {!loadError && approvedAwaitingIssue.length > 0 && (
+            {!loadError && approvedCount > 0 && (
               <div className="p-3 rounded-lg border bg-info/10 border-info/30">
                 <div className="flex items-start gap-2">
                   <Clock className="h-4 w-4 text-info shrink-0 mt-0.5" />
                   <div>
                     <p className="text-sm text-foreground">
-                      {approvedAwaitingIssue.length} approved request(s) can be worked on from this center.
+                      {approvedCount} approved request(s) can be worked on from this center.
                     </p>
                     <p className="text-xs text-muted-foreground mt-1">
-                      Latest token: {approvedAwaitingIssue[0]?.token_number}
+                      Latest token: {latestApprovedToken}
                     </p>
                   </div>
                 </div>

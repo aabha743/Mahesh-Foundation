@@ -3,7 +3,7 @@ import { Package, CheckCircle, ArrowRightLeft, Wrench, AlertTriangle, Clock } fr
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { apiFetch } from "@/lib/api";
+import { apiFetch, leaseRequestsUrl } from "@/lib/api";
 
 const iconMap = {
   Package, CheckCircle, ArrowRightLeft, Wrench,
@@ -27,6 +27,7 @@ const statusVariant: Record<string, "default" | "secondary" | "destructive"> = {
 
 type LeaseRow = { token: string; name: string; skus: string; status: "Pending" | "Approved" | "Rejected" | "Active" | "Closed" | "Expired"; date: string };
 type AlertRow = { type: "warranty" | "overdue"; message: string; date: string };
+type LeaseRequestApi = { token_number: string; requestor_name: string; status: string; created_at: string; skus: string[] };
 
 export default function Dashboard() {
   // Renders admin dashboard using live API-backed metrics and alerts.
@@ -34,26 +35,56 @@ export default function Dashboard() {
     Array<{ title: string; value: number; subtitle: string; color: keyof typeof colorMap; icon: keyof typeof iconMap }>
   >([]);
   const [leaseRequests, setLeaseRequests] = useState<LeaseRow[]>([]);
-  const [alerts, setAlerts] = useState<AlertRow[]>([]);
+  const [warrantyAlerts, setWarrantyAlerts] = useState<AlertRow[]>([]);
+  const [leaseAlerts, setLeaseAlerts] = useState<AlertRow[]>([]);
 
   useEffect(() => {
-    // Loads dashboard cards, request snapshots, and warning alerts from backend data.
-    async function loadDashboard() {
+    // Loads asset cards and warranty alerts; on their own, so a lease request error does not zero the cards.
+    async function loadAssets() {
       try {
-        const [assets, requests] = await Promise.all([
-          apiFetch<Array<{ id: string; status: string; warranty_expiry: string | null }>>("/api/v1/assets"),
-          apiFetch<Array<{ token_number: string; requestor_name: string; status: string; created_at: string; skus: string[] }>>(
-            "/api/v1/lease-requests",
-          ),
-        ]);
+        const assets = await apiFetch<Array<{ id: string; status: string; warranty_expiry: string | null }>>("/api/v1/assets");
         setSummaryCards([
           { title: "Total Assets", value: assets.length, subtitle: "All registered devices", color: "primary", icon: "Package" },
           { title: "Available", value: assets.filter((a) => a.status === "available").length, subtitle: "Ready to lease", color: "success", icon: "CheckCircle" },
           { title: "Leased", value: assets.filter((a) => a.status === "leased").length, subtitle: "Currently on lease", color: "info", icon: "ArrowRightLeft" },
           { title: "Under Repair", value: assets.filter((a) => a.status === "under_repair" || a.status === "repair").length, subtitle: "In maintenance", color: "warning", icon: "Wrench" },
         ]);
+        const now = new Date();
+        const soon = new Date(now);
+        soon.setDate(soon.getDate() + 30);
+        setWarrantyAlerts(
+          assets
+            .filter((a) => a.warranty_expiry)
+            .filter((a) => {
+              const d = new Date(a.warranty_expiry!);
+              return !Number.isNaN(d.getTime()) && d >= now && d <= soon;
+            })
+            .slice(0, 5)
+            .map((a) => ({
+              type: "warranty" as const,
+              message: `Warranty expires on ${a.warranty_expiry}`,
+              date: a.warranty_expiry ?? "",
+            })),
+        );
+      } catch {
+        setSummaryCards([
+          { title: "Total Assets", value: 0, subtitle: "All registered devices", color: "primary", icon: "Package" },
+          { title: "Available", value: 0, subtitle: "Ready to lease", color: "success", icon: "CheckCircle" },
+          { title: "Leased", value: 0, subtitle: "Currently on lease", color: "info", icon: "ArrowRightLeft" },
+          { title: "Under Repair", value: 0, subtitle: "In maintenance", color: "warning", icon: "Wrench" },
+        ]);
+      }
+    }
+
+    // Loads the latest requests and the newest active leases (the server pages and filters them).
+    async function loadLeaseRequests() {
+      try {
+        const [requests, activeRequests] = await Promise.all([
+          apiFetch<LeaseRequestApi[]>(leaseRequestsUrl({ limit: 8 })),
+          apiFetch<LeaseRequestApi[]>(leaseRequestsUrl({ status: "active", limit: 3 })),
+        ]);
         setLeaseRequests(
-          requests.slice(0, 8).map((r) => ({
+          requests.map((r) => ({
             token: r.token_number,
             name: r.requestor_name,
             skus: (r.skus ?? []).join(", "),
@@ -72,43 +103,23 @@ export default function Dashboard() {
             date: r.created_at.slice(0, 10),
           })),
         );
-        const now = new Date();
-        const soon = new Date(now);
-        soon.setDate(soon.getDate() + 30);
-        const warrantyAlerts = assets
-          .filter((a) => a.warranty_expiry)
-          .filter((a) => {
-            const d = new Date(a.warranty_expiry!);
-            return !Number.isNaN(d.getTime()) && d >= now && d <= soon;
-          })
-          .slice(0, 5)
-          .map((a) => ({
-            type: "warranty" as const,
-            message: `Warranty expires on ${a.warranty_expiry}`,
-            date: a.warranty_expiry ?? "",
-          }));
-        const overdueAlerts = requests
-          .filter((r) => r.status === "active")
-          .slice(0, 3)
-          .map((r) => ({
+        setLeaseAlerts(
+          activeRequests.map((r) => ({
             type: "overdue" as const,
             message: `Active lease in progress: ${r.token_number} (${r.requestor_name})`,
             date: r.created_at.slice(0, 10),
-          }));
-        setAlerts([...warrantyAlerts, ...overdueAlerts]);
+          })),
+        );
       } catch {
-        setSummaryCards([
-          { title: "Total Assets", value: 0, subtitle: "All registered devices", color: "primary", icon: "Package" },
-          { title: "Available", value: 0, subtitle: "Ready to lease", color: "success", icon: "CheckCircle" },
-          { title: "Leased", value: 0, subtitle: "Currently on lease", color: "info", icon: "ArrowRightLeft" },
-          { title: "Under Repair", value: 0, subtitle: "In maintenance", color: "warning", icon: "Wrench" },
-        ]);
+        // The table and lease alerts stay empty; the asset cards load on their own.
       }
     }
-    void loadDashboard();
+
+    void loadAssets();
+    void loadLeaseRequests();
   }, []);
 
-  const safeAlerts = useMemo(() => alerts, [alerts]);
+  const safeAlerts = useMemo(() => [...warrantyAlerts, ...leaseAlerts], [warrantyAlerts, leaseAlerts]);
 
   return (
     <div className="space-y-6">

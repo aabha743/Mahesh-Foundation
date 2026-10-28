@@ -658,7 +658,13 @@ def build_public_lease_lookup_result(db: Session, req: LeaseRequest, *, include_
         m = res["mobile"]
         res["mobile"] = m[:2] + "*" * (len(m) - 4) + m[-2:] if len(m) >= 4 else "*" * len(m)
     if res.get("aadhar_number"):
-        a = res["aadhar_number"]
-        res["aadhar_number"] = "*" * (len(a) - 4) + a[-4:] if len(a) >= 4 else "*" * len(a)
+        res["aadhar_number"] = mask_aadhar(res["aadhar_number"])
 
     return res
+
+
+def mask_aadhar(number: str | None) -> str | None:
+    """An Aadhaar number with all but the last four digits hidden, e.g. ********1234."""
+    if not number:
+        return number
+    return "*" * (len(number) - 4) + number[-4:] if len(number) >= 4 else "*" * len(number)

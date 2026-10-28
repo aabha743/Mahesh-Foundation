@@ -34,9 +34,15 @@ export default function ApprovalDetail() {
   useEffect(() => {
     // Loads a single approval request with SKU availability and fulfillment-center hints.
     async function loadRequest() {
+      if (!id) {
+        setRequest(null);
+        setLoading(false);
+        return;
+      }
       try {
-        const [requests, skus, centers] = await Promise.all([
-          apiFetch<Array<{
+        // A 404 (no such request, or not one this user may see) lands in the catch: "Request not found".
+        const [row, skus, centers] = await Promise.all([
+          apiFetch<{
             id: string;
             token_number: string;
             preferred_center_id: string | null;
@@ -60,16 +66,11 @@ export default function ApprovalDetail() {
             fulfillment_centers?: Array<{ center_id: string; center_name: string }>;
             skus: string[];
             items?: Array<{ sku_id: string; sku_name: string; quantity_requested: number; pickup_center_name?: string | null }>;
-          }>>("/api/v1/lease-requests"),
+          }>(`/api/v1/lease-requests/${encodeURIComponent(id)}`),
           apiFetch<Array<{ id: string; name: string }>>("/api/v1/skus"),
           apiFetch<Array<{ id: string; name: string }>>("/api/v1/centers?include_inactive=true"),
         ]);
 
-        const row = requests.find((r) => r.id === id);
-        if (!row) {
-          setRequest(null);
-          return;
-        }
         const skuInventory = await apiFetch<Array<{ sku_id: string; status: string }>>("/api/v1/assets");
         const stockBySkuId: Record<string, number> = {};
         skuInventory.forEach((a) => {

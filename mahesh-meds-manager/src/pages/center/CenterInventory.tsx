@@ -7,7 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import type { AssetStatus } from "@/lib/uiTypes";
 import { useCenterScope } from "@/hooks/useCenterScope";
-import { apiFetch } from "@/lib/api";
+import { apiFetch, listLeaseOpenItems } from "@/lib/api";
 import { dbAssetStatusToUi } from "@/lib/assetStatus";
 import { toast } from "sonner";
 
@@ -26,21 +26,6 @@ type AssetApi = {
   home_center_id?: string | null;
   status: string;
   warranty_expiry: string | null;
-};
-
-type LeaseRequestApi = {
-  id: string;
-  token_number: string;
-  requestor_name: string;
-  mobile: string;
-  status: string;
-  items?: Array<{
-    sku_id: string;
-    sku_name: string;
-    quantity_requested: number;
-    asset_id: string | null;
-    due_date: string | null;
-  }>;
 };
 
 type Row = {
@@ -92,30 +77,27 @@ export default function CenterInventory() {
 
     async function load() {
       try {
-        const [skus, assets, leases] = await Promise.all([
+        const [skus, assets, openItems] = await Promise.all([
           apiFetch<Array<{ id: string; name: string }>>("/api/v1/skus"),
           apiFetch<AssetApi[]>("/api/v1/assets"),
-          apiFetch<LeaseRequestApi[]>("/api/v1/lease-requests"),
+          listLeaseOpenItems(centerId),
         ]);
         if (cancelled) return;
 
         const skuMap = Object.fromEntries(skus.map((sku) => [sku.id, sku.name]));
+        // Only devices out on loan now (issued, not returned), so a returned lease never shows as the lessee.
         const activeAssignments = new Map<
           string,
           { requestorName: string; mobile: string; dueDate: string | null; tokenNumber: string }
         >();
 
-        for (const lease of leases) {
-          if (!lease.items?.length) continue;
-          for (const item of lease.items) {
-            if (!item.asset_id) continue;
-            activeAssignments.set(item.asset_id, {
-              requestorName: lease.requestor_name,
-              mobile: lease.mobile,
-              dueDate: item.due_date,
-              tokenNumber: lease.token_number,
-            });
-          }
+        for (const item of openItems) {
+          activeAssignments.set(item.asset_id, {
+            requestorName: item.requestor_name,
+            mobile: item.mobile,
+            dueDate: item.due_date,
+            tokenNumber: item.token_number,
+          });
         }
 
         const mine = assets.filter((asset) => (asset.home_center_id ?? asset.center_id) === centerId);

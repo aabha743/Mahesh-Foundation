@@ -235,6 +235,9 @@ class LeaseRequestCreate(LeaseRequestBase):
 
 
 class LeaseRequestOut(LeaseRequestBase):
+    # Masked to the last four digits for staff who do not review requests.
+    aadhar_number: str
+    patient_aadhar_number: str | None = None
     id: str
     due_date: date | None = None
     created_at: datetime
