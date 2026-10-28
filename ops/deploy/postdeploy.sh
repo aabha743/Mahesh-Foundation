@@ -7,6 +7,7 @@ step "API process"
 echo "restarted at: $since   automatic restarts: $(systemctl show mahesh-meds-api -p NRestarts --value)"
 check "errors since restart" "$(journalctl -u mahesh-meds-api --since "$since" --no-pager | grep -cE ' ERROR |Traceback')" "0"
 check "one worker holds the scheduler lock" "$(journalctl -u mahesh-meds-api --since "$since" --no-pager | grep -c 'acquired the scheduler advisory lock')" "1"
+check "the database still has the scheduler lock taken" "$(mariadb -N -e "SELECT IS_USED_LOCK('mahesh_meds_scheduler') IS NOT NULL")" "1"
 
 step "through nginx (public hostname, resolved locally)"
 code() { curl -sk --resolve "$SITE:443:127.0.0.1" -o /dev/null -w '%{http_code}' "$@"; }
